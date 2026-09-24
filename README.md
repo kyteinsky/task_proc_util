@@ -4,6 +4,9 @@
 -->
 # Task Processing Utility
 
+> [!WARNING]
+> Disclaimer: This project has been vibe coded.
+
 This application changes the number of Nextcloud Task Processing workers automatically. It calculates the number of workers from the number of tasks in the queue. The number of workers stays between a minimum value and a maximum value. The administrator sets these two values.
 
 The application gives workers to all the task types. Thus a large number of tasks of one type does not prevent the operation of the other types.
