@@ -24,6 +24,8 @@ jobs:
         server-versions: ['stable33', 'stable34']
         include:
           - php-versions: '8.3'
+            server-versions: 'stable35'
+          - php-versions: '8.3'
             server-versions: 'master'
 
     name: Integration 🐘${{ matrix.php-versions }} ☁️${{ matrix.server-versions }}
