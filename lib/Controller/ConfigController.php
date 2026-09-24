@@ -40,7 +40,7 @@ class ConfigController extends OCSController {
 	/**
 	 * Get the current supervisor configuration.
 	 *
-	 * @return DataResponse<Http::STATUS_OK, array{min_workers: int, max_workers: int, poll_interval: int, enabled: bool}, array{}>
+	 * @return DataResponse<Http::STATUS_OK, array{max_workers: int, poll_interval: int, enabled: bool}, array{}>
 	 *
 	 * 200: Configuration returned
 	 */
@@ -54,35 +54,28 @@ class ConfigController extends OCSController {
 	/**
 	 * Update the supervisor configuration.
 	 *
-	 * @param int|null $minWorkers Minimum number of workers to keep running
 	 * @param int|null $maxWorkers Maximum number of workers allowed
 	 * @param int|null $pollInterval Seconds between queue polls
 	 * @param bool|null $enabled Whether the supervisor should run
-	 * @return DataResponse<Http::STATUS_OK, array{min_workers: int, max_workers: int, poll_interval: int, enabled: bool}, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, array{message: string}, array{}>
+	 * @return DataResponse<Http::STATUS_OK, array{max_workers: int, poll_interval: int, enabled: bool}, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, array{message: string}, array{}>
 	 *
 	 * 200: Configuration saved
-	 * 400: Invalid configuration (min greater than max)
+	 * 400: Invalid configuration
 	 */
 	#[AuthorizedAdminSetting(settings: AdminSettings::class)]
 	#[ApiRoute(verb: 'PUT', url: '/config', root: '/task_proc_util')]
 	public function setConfig(
-		?int $minWorkers = null,
 		?int $maxWorkers = null,
 		?int $pollInterval = null,
 		?bool $enabled = null,
 	): DataResponse {
-		$min = $minWorkers ?? $this->config->getMinWorkers();
-		$max = $maxWorkers ?? $this->config->getMaxWorkers();
-		if ($min > $max) {
+		if ($maxWorkers !== null && $maxWorkers < 1) {
 			return new DataResponse(
-				['message' => 'Minimum workers cannot exceed maximum workers'],
+				['message' => 'Maximum workers must be at least 1'],
 				Http::STATUS_BAD_REQUEST,
 			);
 		}
 
-		if ($minWorkers !== null) {
-			$this->config->setMinWorkers($minWorkers);
-		}
 		if ($maxWorkers !== null) {
 			$this->config->setMaxWorkers($maxWorkers);
 		}

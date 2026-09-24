@@ -173,11 +173,10 @@ func tick(ctx context.Context, logger *slog.Logger, ncDB *db.DB, workerPool *poo
 		})
 	}
 
-	plan := scheduler.Compute(demands, cfg.MinWorkers, cfg.MaxWorkers)
+	plan := scheduler.Compute(demands, cfg.MaxWorkers)
 	workerPool.Reconcile(ctx, plan)
 
 	logger.Info("reconciled workers",
-		"min", cfg.MinWorkers,
 		"max", cfg.MaxWorkers,
 		"plan", plan,
 		"workers", workerPool.Running(),

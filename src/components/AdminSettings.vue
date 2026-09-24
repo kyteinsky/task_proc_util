@@ -13,15 +13,6 @@
 			</NcCheckboxRadioSwitch>
 
 			<div class="tpu-field">
-				<NcTextField v-model="minWorkersStr"
-					type="number"
-					:label="t('task_proc_util', 'Minimum workers')"
-					:helper-text="t('task_proc_util', 'Workers kept running while there is pending work')"
-					:disabled="!config.enabled"
-					@update:model-value="onChange" />
-			</div>
-
-			<div class="tpu-field">
 				<NcTextField v-model="maxWorkersStr"
 					type="number"
 					:label="t('task_proc_util', 'Maximum workers')"
@@ -82,14 +73,12 @@ export default {
 
 	data() {
 		const config = loadState('task_proc_util', 'config', {
-			min_workers: 1,
 			max_workers: 4,
 			poll_interval: 10,
 			enabled: true,
 		})
 		return {
 			config,
-			minWorkersStr: String(config.min_workers),
 			maxWorkersStr: String(config.max_workers),
 			pollIntervalStr: String(config.poll_interval),
 			error: '',
@@ -114,19 +103,15 @@ export default {
 		},
 
 		validate() {
-			const min = parseInt(this.minWorkersStr, 10)
 			const max = parseInt(this.maxWorkersStr, 10)
 			const poll = parseInt(this.pollIntervalStr, 10)
-			if (Number.isNaN(min) || Number.isNaN(max) || Number.isNaN(poll)) {
+			if (Number.isNaN(max) || Number.isNaN(poll)) {
 				return { ok: false, message: t('task_proc_util', 'All values must be numbers') }
 			}
-			if (min < 0 || max < 1 || poll < 1) {
+			if (max < 1 || poll < 1) {
 				return { ok: false, message: t('task_proc_util', 'Values are out of range') }
 			}
-			if (min > max) {
-				return { ok: false, message: t('task_proc_util', 'Minimum workers cannot exceed maximum workers') }
-			}
-			return { ok: true, min, max, poll }
+			return { ok: true, max, poll }
 		},
 
 		async save() {
@@ -139,14 +124,12 @@ export default {
 				const { data } = await axios.put(
 					generateOcsUrl('task_proc_util/config'),
 					{
-						minWorkers: result.min,
 						maxWorkers: result.max,
 						pollInterval: result.poll,
 						enabled: this.config.enabled,
 					},
 				)
 				this.config = data.ocs.data
-				this.minWorkersStr = String(this.config.min_workers)
 				this.maxWorkersStr = String(this.config.max_workers)
 				this.pollIntervalStr = String(this.config.poll_interval)
 				showSuccess(t('task_proc_util', 'Settings saved'))

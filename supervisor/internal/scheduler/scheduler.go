@@ -44,29 +44,23 @@ type Plan map[string]int
 
 // Compute returns the desired worker allocation per task type.
 //
-//   - min: minimum total workers to keep running even when idle.
-//   - max: maximum total workers allowed at once.
-//
 // A type's demand is its scheduled plus running tasks, so a worker is not
 // scaled away while the task it already claimed is still in flight.
 //
 // Allocation algorithm:
 //  1. Every task type with outstanding work gets one slot (fair baseline,
 //     prevents starvation).
-//  2. Remaining capacity up to max is distributed proportionally to each
-//     type's outstanding work (largest-remainder method for stable rounding).
-//  3. Nothing outstanding anywhere means no workers: min only applies to types
-//     that actually have work to do.
-func Compute(demands []Demand, min, max int) Plan {
+//  2. Remaining capacity up to max is distributed proportionally to the work
+//     each type still has no worker for (largest-remainder method for stable
+//     rounding).
+//
+// Workers are only ever assigned to work that exists: the total is the smaller
+// of max and the outstanding work, and no type gets more workers than it has
+// tasks. With nothing outstanding the plan is empty.
+func Compute(demands []Demand, max int) Plan {
 	plan := Plan{}
 	if max < 1 {
 		max = 1
-	}
-	if min < 0 {
-		min = 0
-	}
-	if min > max {
-		min = max
 	}
 
 	// Only task types with outstanding work are candidates for workers.
@@ -80,8 +74,7 @@ func Compute(demands []Demand, min, max int) Plan {
 	}
 
 	if len(active) == 0 {
-		// Nothing pending. Keep min workers? There is no type to assign them to,
-		// so the pool stays empty; min only matters when there is work.
+		// Nothing outstanding: no type to assign a worker to.
 		return plan
 	}
 
@@ -93,14 +86,11 @@ func Compute(demands []Demand, min, max int) Plan {
 		return active[i].TaskTypeID < active[j].TaskTypeID
 	})
 
-	// Total slots we want to run this round: at least min, at most max, and
-	// never more than there is pending work.
+	// Total slots to run this round: at most max, and never more than there is
+	// outstanding work.
 	target := totalScheduled
 	if target > max {
 		target = max
-	}
-	if target < min {
-		target = min
 	}
 
 	// Step 1: one slot per active type (baseline fairness), capped at target.
@@ -111,17 +101,42 @@ func Compute(demands []Demand, min, max int) Plan {
 		plan[d.TaskTypeID] = 1
 	}
 
-	// Step 2: distribute the remainder proportionally to scheduled counts using
-	// the largest-remainder method.
-	remaining := target - sum(plan)
-	if remaining > 0 {
-		distributeProportional(plan, active, totalScheduled, remaining)
-	}
+	// Step 2: hand out the remaining slots in proportion to the work each type
+	// still has no worker for.
+	//
+	// This repeats. A type's proportional share can exceed the work it actually
+	// has; the surplus is clamped away and must go back into the pool, or the
+	// plan silently runs fewer workers than both max and the queue allow.
+	for {
+		remaining := target - sum(plan)
+		if remaining <= 0 {
+			break
+		}
 
-	// Never assign more workers to a type than it has tasks to work on.
-	for _, d := range active {
-		if plan[d.TaskTypeID] > d.work() {
-			plan[d.TaskTypeID] = d.work()
+		// Types that can still take another worker, weighted by unmet work.
+		hungry := make([]Demand, 0, len(active))
+		unmet := 0
+		for _, d := range active {
+			if gap := d.work() - plan[d.TaskTypeID]; gap > 0 {
+				hungry = append(hungry, d)
+				unmet += gap
+			}
+		}
+		if len(hungry) == 0 {
+			break
+		}
+
+		before := sum(plan)
+		distributeProportional(plan, hungry, unmet, remaining)
+
+		// Never give a type more workers than it has tasks to work on.
+		for _, d := range hungry {
+			if plan[d.TaskTypeID] > d.work() {
+				plan[d.TaskTypeID] = d.work()
+			}
+		}
+		if sum(plan) <= before {
+			break // no progress; stop rather than spin
 		}
 	}
 
@@ -129,9 +144,9 @@ func Compute(demands []Demand, min, max int) Plan {
 }
 
 // distributeProportional hands out `remaining` extra slots across active types
-// in proportion to their scheduled counts, using the largest-remainder method
-// for fair, stable rounding.
-func distributeProportional(plan Plan, active []Demand, totalScheduled, remaining int) {
+// in proportion to the work each one still has no worker for, using the
+// largest-remainder method for fair, stable rounding.
+func distributeProportional(plan Plan, active []Demand, totalUnmet, remaining int) {
 	type share struct {
 		id        string
 		whole     int
@@ -139,7 +154,10 @@ func distributeProportional(plan Plan, active []Demand, totalScheduled, remainin
 	}
 	shares := make([]share, 0, len(active))
 	for _, d := range active {
-		exact := float64(remaining) * float64(d.work()) / float64(totalScheduled)
+		// Weight by the work this type has no worker for yet, so a type that is
+		// already fully served does not attract more slots.
+		gap := d.work() - plan[d.TaskTypeID]
+		exact := float64(remaining) * float64(gap) / float64(totalUnmet)
 		whole := int(exact)
 		shares = append(shares, share{id: d.TaskTypeID, whole: whole, remainder: exact - float64(whole)})
 		plan[d.TaskTypeID] += whole
@@ -158,8 +176,18 @@ func distributeProportional(plan Plan, active []Demand, totalScheduled, remainin
 		}
 		return shares[i].id < shares[j].id
 	})
-	for i := 0; i < leftover && i < len(shares); i++ {
+	// Cap the lookup so a leftover slot never lands on a type that is already
+	// fully served; the caller's loop re-offers anything still unassigned.
+	capacity := make(map[string]int, len(active))
+	for _, d := range active {
+		capacity[d.TaskTypeID] = d.work()
+	}
+	for i := 0; leftover > 0 && i < len(shares); i++ {
+		if plan[shares[i].id] >= capacity[shares[i].id] {
+			continue
+		}
 		plan[shares[i].id]++
+		leftover--
 	}
 }
 

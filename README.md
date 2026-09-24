@@ -4,67 +4,112 @@
 -->
 # Task Processing Utility
 
-Auto-scales Nextcloud Task Processing workers based on the live task queue, between an admin-configurable **minimum** and **maximum** number of workers. Tasks of every type are scheduled fairly so a flood of one type cannot starve the others.
+This application changes the number of Nextcloud Task Processing workers automatically. It calculates the number of workers from the number of tasks in the queue. The number of workers stays between a minimum value and a maximum value. The administrator sets these two values.
 
-This implements the pattern described in the Nextcloud admin manual — [*Improve AI task pickup speed*](https://docs.nextcloud.com/server/latest/admin_manual/ai/overview.html#improve-ai-task-pickup-speed) — with dynamic, queue-driven scaling instead of a fixed worker count.
+The application gives workers to all the task types. Thus a large number of tasks of one type does not prevent the operation of the other types.
 
-## How it works
+The Nextcloud administrator manual gives this method in [*Improve AI task pickup speed*](https://docs.nextcloud.com/server/latest/admin_manual/ai/overview.html#improve-ai-task-pickup-speed). This application uses the same method. But it calculates the number of workers from the queue. It does not use a constant number of workers.
+
+## How the Application Operates
 
 ```
-┌──────────────────────┐        direct DB reads (config.php)      ┌─────────────────────┐
-│   Go supervisor      │  ← task queue depth per task type        │   Nextcloud server  │
-│   (persistent svc)   │  ← admin config from oc_appconfig        │                     │
-│                      │                                          │   (PHP + DB)        │
-│  poll → schedule     │                                          │                     │
-│       → reconcile ──▶│  spawn: occ taskprocessing-util:run      │                     │
+┌──────────────────────┐        the supervisor reads config.php   ┌─────────────────────┐
+│   Go supervisor      │  ← the number of tasks for each type     │   Nextcloud server  │
+│   (service)          │  ← the configuration from oc_appconfig   │                     │
+│                      │                                          │   (PHP and database)│
+│  read → calculate    │                                          │                     │
+│       → adjust ─────▶│  starts: occ taskprocessing-util:run     │                     │
 └──────────────────────┘    --taskType <id> --timeout <N>  ──────▶└─────────────────────┘
 ```
 
-**Go supervisor** (`supervisor/`, ships as arch-specific binaries):  
-Cross-compiled for `amd64`, `arm64`, and `arm`. The binaries land in `bin/<arch>/task_proc_util-supervisor`. A shell wrapper at `bin/task_proc_util-supervisor` reads `uname -m`, maps it to the matching subdirectory, and `exec`s the correct binary — so the service `ExecStart` path is always the same regardless of host architecture. On every poll tick it:
+### The Go Supervisor
 
-1. re-reads the admin config (min/max workers, poll interval, enabled flag) — changes take effect without a restart,
-2. lists available task types and reads each type's queue depth directly from the database,
-3. computes a fair per-type worker allocation:
-   - every type with pending work gets at least one slot (starvation prevention),
-   - remaining capacity is distributed proportionally to queue depth (largest-remainder rounding),
-   - total workers are capped between min and max, and never exceed the number of pending tasks,
-4. reconciles the pool of running worker subprocesses to match the plan.
+The `supervisor/` directory contains the Go source code. The build makes one binary file for each computer architecture: `amd64`, `arm64`, and `arm`. The build puts each binary file in `bin/<arch>/task_proc_util-supervisor`.
 
-**PHP worker command** (`occ taskprocessing-util:run --taskType <id>`):  
-A long-lived worker pinned to one task type. It bootstraps Nextcloud once then drains tasks of its assigned type, and recycles on `--timeout` so provider and config changes are picked up regularly.
+A shell script at `bin/task_proc_util-supervisor` reads the architecture with `uname -m`. Then the script starts the correct binary file. Thus the `ExecStart` path in the service file is the same for all architectures.
 
-Each task is claimed atomically so that the many workers running in parallel never double-process the same task:
+The supervisor does these steps at each poll interval:
 
-- on **Nextcloud 35+** via `claimNextScheduledTask()`, a single `SELECT ... FOR UPDATE SKIP LOCKED` that both selects the task and marks it `RUNNING`;
-- on **Nextcloud 33/34** via `getNextScheduledTask()` + `lockTask()`, skipping tasks another worker locked first.
+1. It reads the configuration of the administrator again. The configuration contains the maximum number of workers, the poll interval, and the enable switch. A change becomes effective immediately. A restart is not necessary.
+2. It finds the task types that have tasks in the scheduled state or the running state. Then it reads the number of tasks of each of these types from the database.
+3. It calculates the number of workers for each task type:
+   - Each task type that has work gets a minimum of one worker. Thus all the task types that have work get a worker.
+   - The supervisor divides the remaining workers in proportion to the quantity of work. It uses the largest-remainder method.
+   - The total number of workers is not more than `max_workers`. It is also not more than the quantity of work.
+4. It starts workers or stops workers. It continues until their number agrees with the calculation.
 
-**Shutdown and timeouts.** The supervisor sends `SIGTERM` to the worker's process group on scale-down or shutdown; the worker finishes its current task, then exits. If a worker overruns its `--timeout` — normally because a provider call is not returning — the supervisor escalates to `SIGKILL` after a grace period and marks the orphaned task `FAILED`, so it never sits in `RUNNING` forever.
+The **work** of a task type is the sum of two values:
 
-**Admin settings** appear under **Administration → Artificial Intelligence**.
+- the tasks in the scheduled state,
+- the tasks in the running state that the workers of this supervisor process now.
+
+The supervisor counts the tasks that the workers process now. Thus it does not stop a worker during the operation on a task.
+
+The supervisor does not count a task in the running state that has no worker. A task stays in this condition after a failure of a worker. A task also stays in this condition when an asynchronous provider outside this application controls it. These tasks must not keep workers permanently.
+
+Before the supervisor starts the poll loop, it does the command `occ taskprocessing-util:run --help` one time. If `occ` does not operate, the supervisor shows the cause and stops. These are possible causes: an incorrect user, an incorrect directory, or a disabled application. This test prevents the start of workers that can only stop immediately.
+
+### The PHP Worker Command
+
+The command `occ taskprocessing-util:run --taskType <id>` starts one worker. Each worker processes only one task type.
+
+The worker starts Nextcloud one time. Then it processes the tasks of its task type continuously. At the end of the `--timeout` interval, the worker stops and the supervisor starts a new worker. Thus the new worker gets the new provider data and the new configuration.
+
+The supervisor starts each worker from the Nextcloud root directory, because `occ` does not operate in a different directory.
+
+The worker uses only synchronous providers (`ISynchronousProvider`). A task type can have no preferred provider. A task type can also have an asynchronous provider. An asynchronous provider is an external application, for example `context_chat`, that has its own worker. In these two conditions the worker stops with exit code `3`. Then the supervisor does not start more workers for this task type.
+
+The log file shows the cause one time:
+
+```
+level=WARN msg="task type has no preferred synchronous provider; not starting further workers for it"
+  taskType=core:text2text stderr="No preferred synchronous provider for task type core:text2text; ..."
+```
+
+The supervisor examines these task types again when the administrator changes the configuration. Thus a new provider becomes effective without a restart of the supervisor.
+
+Two or more workers operate at the same time. Each worker takes a task with one atomic operation. Thus two workers do not take the same task.
+
+- On **Nextcloud 35 and subsequent versions**, the worker uses `claimNextScheduledTask()`. This function does one `SELECT ... FOR UPDATE SKIP LOCKED` operation. The operation selects the task and sets the state of the task to `RUNNING`.
+- On **Nextcloud 33 and 34**, the worker uses `getNextScheduledTask()` and then `lockTask()`. The worker ignores the tasks that a different worker locked before.
+
+### Stop and Timeout
+
+The supervisor sends `SIGTERM` to the process group of the worker in two conditions: when it decreases the number of workers, and when it stops. The worker completes its current task and then stops.
+
+A worker can continue for more than its `--timeout` interval. Usually this occurs because a provider does not give an answer. The supervisor waits 30 minutes and then sends `SIGKILL`. Then the supervisor sets the state of the task of that worker to `FAILED`. Thus the task does not stay in the `RUNNING` state permanently.
+
+The supervisor changes the state of only the task of the worker that it stopped. The other tasks in the running state belong to the other workers of the same task type. The supervisor does not change these tasks.
+
+The administrator settings are in **Administration → Artificial Intelligence**.
 
 ## Requirements
 
-- Nextcloud 33 or later
-- The supervisor binary running as a persistent service (e.g. systemd), on the same host as Nextcloud and as the same user
-- Read access to `config.php` (no app password or HTTP credentials required)
+- Nextcloud 33 to 36.
+- A minimum of one task type with a **synchronous** provider. An external application with an asynchronous provider has its own worker. Thus this application does not control it.
+- The supervisor binary file that operates as a continuous service, for example with systemd. The service must operate on the same computer as Nextcloud. The service must operate as the user that owns `config.php`, because `occ` does not operate as a different user.
+- Read access to `config.php`. An application password is not necessary. HTTP credentials are not necessary.
+- Write access to the Nextcloud database. The supervisor sets the state of the task of a stopped worker to `FAILED`.
 
 ## Configuration
 
-All settings are available in the **AI** admin section:
+All the settings are in the **AI** section of the administrator settings.
 
-| Setting         | Default | Meaning                                                   |
-|-----------------|---------|-----------------------------------------------------------|
-| Enable          | on      | Master switch; when off, all workers are drained.         |
-| Minimum workers | 1       | Workers kept alive while there is pending work.           |
-| Maximum workers | 4       | Upper bound on concurrent workers across all task types.  |
-| Poll interval   | 10 s    | How often the supervisor checks the queue.                |
+| Setting         | Default | Name in the database | Function                                        |
+|-----------------|---------|----------------------|-------------------------------------------------|
+| Enable          | on      | `autoscale_enabled`  | The main switch. When it is off, all the workers stop. |
+| Maximum workers | 4       | `max_workers`        | The maximum number of workers for all the task types together. |
+| Poll interval   | 10 s    | `poll_interval`      | The interval between two examinations of the queue. |
 
-## Running the supervisor
+The supervisor starts workers only for the task types that have work. When there is no work, the number of workers becomes zero. A task type gets no more workers than the number of tasks of that type. Therefore `max_workers` is the setting that controls the performance.
 
-The supervisor is a long-lived daemon. It reads Nextcloud's `config.php` directly — no app password or HTTP credentials needed. It runs on the same host as Nextcloud, as the same user (`www-data`), exactly like `notify_push`.
+The switch has the name `autoscale_enabled` in the database. It does not have the name `enabled`, because Nextcloud uses `<appid>/enabled` for the state of the application.
 
-### Systemd example
+## How to Start the Supervisor
+
+The supervisor is a continuous service. It reads the Nextcloud `config.php` file directly. An application password is not necessary. HTTP credentials are not necessary. The service operates on the same computer as Nextcloud, and as the same user (`www-data`). The `notify_push` application uses the same method.
+
+### Example systemd Unit
 
 ```ini
 [Unit]
@@ -76,43 +121,82 @@ User=www-data
 Environment=NC_OCC=php /var/www/html/occ
 Environment=NC_WORKER_TIMEOUT=300
 ExecStart=/var/www/html/apps/task_proc_util/bin/task_proc_util-supervisor /var/www/html/config/config.php
-# ^ shell wrapper; auto-selects bin/amd64|arm64|arm/task_proc_util-supervisor via `uname -m`
+# The line above starts the shell script. The script selects bin/amd64,
+# bin/arm64 or bin/arm automatically with `uname -m`.
 Restart=always
 RestartSec=5
-# Workers are given a grace period to finish the task in flight on shutdown.
-# The default (90s) would SIGKILL the supervisor first, skipping the cleanup
-# that marks interrupted tasks as failed.
+# The workers get an interval to complete the current task when the service
+# stops. The default value (90 s) stops the supervisor too soon. Then the
+# supervisor cannot set the state of the interrupted tasks.
 TimeoutStopSec=3600
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### Flags (alternative to env vars)
+### Flags and Environment Variables
 
-| Positional / Flag | Env var | Default | Description |
-|-------------------|---------|---------|-------------|
-| `config.php` (positional) | `NC_CONFIG_FILE` | — | Path to Nextcloud's `config.php` (required unless overriding all values) |
-| `--occ` | `NC_OCC` | `php occ` | Command to invoke occ (space-separated) |
-| `--occ-dir` | `NC_OCC_DIR` | derived from `config.php` | Nextcloud root to run occ from. `occ` refuses to start anywhere else. |
-| `--worker-timeout` | `NC_WORKER_TIMEOUT` | `300` | Worker recycle interval in seconds (0 = never). A worker that overruns this is force-killed after a 30 minute grace period. |
-| `--database-url` | `DATABASE_URL` | — | Override DB connection (e.g. `mysql://user:pass@host/db`) |
-| `--database-prefix` | `DATABASE_PREFIX` | — | Override table prefix |
-| `--nextcloud-url` | `NEXTCLOUD_URL` | — | Override Nextcloud URL |
+| Flag or positional value  | Environment variable | Default                | Description |
+|---------------------------|----------------------|------------------------|-------------|
+| `config.php` (positional) | `NC_CONFIG_FILE`     | —                      | The path to the Nextcloud `config.php` file. It is necessary, if you do not give all the other values. |
+| `--occ`                   | `NC_OCC`             | `php occ`              | The command that starts occ. Put a space between the parts. |
+| `--occ-dir`               | `NC_OCC_DIR`         | from `config.php`      | The Nextcloud root directory for the occ command. `occ` does not operate in a different directory. |
+| `--worker-timeout`        | `NC_WORKER_TIMEOUT`  | `300`                  | The interval in seconds before a worker stops and starts again (0 = never). If a worker continues for more than this interval, the supervisor waits 30 minutes and then stops the worker. |
+| `--database-url`          | `DATABASE_URL`       | —                      | A different database connection, for example `mysql://user:pass@host/db`. |
+| `--database-prefix`       | `DATABASE_PREFIX`    | —                      | A different prefix for the names of the tables. |
+| `--nextcloud-url`         | `NEXTCLOUD_URL`      | —                      | A different Nextcloud URL. |
 
-Supported databases: **MySQL / MariaDB**, **PostgreSQL**, **SQLite3**. Oracle is not supported.
+The application operates with these databases: **MySQL / MariaDB**, **PostgreSQL**, and **SQLite3**. The application does not operate with Oracle.
+
+### The Worker Command
+
+The supervisor starts the workers automatically. Use these options only for manual operation and for troubleshooting. The supervisor gives only `--taskType` and `--timeout` to the worker.
+
+| Option             | Default | Description |
+|--------------------|---------|-------------|
+| `--taskType`, `-t` | —       | The identifier of the task type for this worker. It is necessary. |
+| `--timeout`        | `0`     | Stop after this number of seconds (0 = no limit). |
+| `--max-tasks`      | `0`     | Stop after this number of tasks (0 = no limit). |
+| `--interval`, `-i` | `1`     | The number of seconds to wait when there is no task. |
+| `--exit-when-idle` | off     | Stop immediately when the queue of this task type is empty. |
+
+These are the exit codes:
+
+- `0` — the worker stopped correctly, because of the timeout, the maximum number of tasks, an empty queue, or a signal.
+- `1` — an error occurred.
+- `3` — the task type has no preferred synchronous provider.
+
+## How to Measure the Performance
+
+Two scripts make tasks and show the results. The two scripts read `NC_URL`, `NC_USER`, and `NC_PASS` from the environment.
+
+```sh
+# Show the task types of this server
+./scripts/schedule-tasks.sh --list
+
+# Make tasks of more than one type. The script shows a batch identifier.
+./scripts/schedule-tasks.sh core:text2text=50 core:text2text:chat=10
+
+# Show the condition of this batch until the queue is empty
+./scripts/task-stats.sh --batch <id> --watch
+```
+
+The `/schedule` endpoint permits a maximum of 20 requests in 120 seconds for each user. The script waits and then does the request again. The `--delay` option decreases the speed for large batches.
+
+Use the **achieved concurrency** value and the **task/s** value to measure the performance. Do not use the `RUN` column. The `RUN` column shows the condition at one moment only, thus its value is frequently too low. A worker has no task in the `RUNNING` state in the interval between two tasks.
 
 ## Development
 
 ```sh
-# Go supervisor
-make supervisor          # build for host arch → bin/<arch>/task_proc_util-supervisor
-make supervisor-release  # cross-compile for amd64, arm64, arm
-make supervisor-test     # go vet + go test ./...
+# The Go supervisor
+make supervisor          # make the binary file for this computer → bin/<arch>/task_proc_util-supervisor
+make supervisor-release  # make the binary files for amd64, arm64 and arm
+make supervisor-test     # go test ./...
+make supervisor-vet      # go vet ./...
 
-# Frontend
+# The user interface
 make frontend            # npm ci && npm run build → js/
 
-# Full release build (all of the above + composer)
+# The full release build: all of the above and composer
 make build
 ```

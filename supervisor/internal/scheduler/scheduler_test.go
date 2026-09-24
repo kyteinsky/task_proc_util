@@ -14,7 +14,7 @@ func total(p Plan) int {
 }
 
 func TestNoDemandNoWorkers(t *testing.T) {
-	plan := Compute(nil, 1, 4)
+	plan := Compute(nil, 4)
 	if len(plan) != 0 {
 		t.Fatalf("expected empty plan, got %v", plan)
 	}
@@ -28,7 +28,7 @@ func TestEveryActiveTypeGetsAtLeastOne(t *testing.T) {
 		{TaskTypeID: "small1", Scheduled: 1},
 		{TaskTypeID: "small2", Scheduled: 1},
 	}
-	plan := Compute(demands, 1, 4)
+	plan := Compute(demands, 4)
 	if total(plan) != 4 {
 		t.Fatalf("expected 4 total workers, got %d (%v)", total(plan), plan)
 	}
@@ -39,7 +39,7 @@ func TestEveryActiveTypeGetsAtLeastOne(t *testing.T) {
 
 func TestCapAtMax(t *testing.T) {
 	demands := []Demand{{TaskTypeID: "a", Scheduled: 1000}}
-	plan := Compute(demands, 1, 4)
+	plan := Compute(demands, 4)
 	if plan["a"] != 4 {
 		t.Fatalf("expected cap at 4, got %v", plan)
 	}
@@ -47,7 +47,7 @@ func TestCapAtMax(t *testing.T) {
 
 func TestNeverMoreWorkersThanTasks(t *testing.T) {
 	demands := []Demand{{TaskTypeID: "a", Scheduled: 2}}
-	plan := Compute(demands, 1, 10)
+	plan := Compute(demands, 10)
 	if plan["a"] != 2 {
 		t.Fatalf("expected 2 (limited by task count), got %v", plan)
 	}
@@ -57,7 +57,7 @@ func TestNeverMoreWorkersThanTasks(t *testing.T) {
 // scheduled tasks the busy worker's own task would be invisible and the worker
 // would be scaled away mid-task on the very next poll tick.
 func TestRunningTaskKeepsItsWorker(t *testing.T) {
-	plan := Compute([]Demand{{TaskTypeID: "a", Scheduled: 0, Running: 1, Workers: 1}}, 1, 4)
+	plan := Compute([]Demand{{TaskTypeID: "a", Scheduled: 0, Running: 1, Workers: 1}}, 4)
 	if plan["a"] != 1 {
 		t.Fatalf("expected the in-flight task to keep its worker, got %v", plan)
 	}
@@ -71,7 +71,7 @@ func TestOrphanedRunningTaskGetsNoWorker(t *testing.T) {
 	plan := Compute([]Demand{
 		{TaskTypeID: "ghost", Scheduled: 0, Running: 3, Workers: 0},
 		{TaskTypeID: "real", Scheduled: 2},
-	}, 1, 4)
+	}, 4)
 
 	if plan["ghost"] != 0 {
 		t.Errorf("orphaned RUNNING tasks must not get workers, got %v", plan)
@@ -81,12 +81,40 @@ func TestOrphanedRunningTaskGetsNoWorker(t *testing.T) {
 	}
 }
 
-// A type with nothing scheduled and nothing running needs no workers, even
-// though min is 1: min applies only to types that have work.
+// A type with nothing scheduled and nothing running needs no workers.
 func TestIdleTypeGetsNoWorkers(t *testing.T) {
-	plan := Compute([]Demand{{TaskTypeID: "a", Scheduled: 0, Running: 0}}, 1, 4)
+	plan := Compute([]Demand{{TaskTypeID: "a", Scheduled: 0, Running: 0}}, 4)
 	if len(plan) != 0 {
 		t.Fatalf("expected empty plan when nothing is outstanding, got %v", plan)
+	}
+}
+
+// When max allows it, every outstanding task should get a worker. A type's
+// proportional share can exceed the work it actually has; that surplus is
+// clamped away and must be offered to the other types, not silently dropped.
+func TestCapacityIsFullyUsed(t *testing.T) {
+	cases := []struct {
+		name    string
+		demands []Demand
+		max     int
+		want    int
+	}{
+		{"uneven 1/5", []Demand{{TaskTypeID: "a", Scheduled: 1}, {TaskTypeID: "b", Scheduled: 5}}, 8, 6},
+		{"uneven 1/9", []Demand{{TaskTypeID: "a", Scheduled: 1}, {TaskTypeID: "b", Scheduled: 9}}, 16, 10},
+		{"three types 1/1/6", []Demand{
+			{TaskTypeID: "a", Scheduled: 1},
+			{TaskTypeID: "b", Scheduled: 1},
+			{TaskTypeID: "c", Scheduled: 6},
+		}, 8, 8},
+		{"busy worker plus queued elsewhere", []Demand{
+			{TaskTypeID: "a", Running: 1, Workers: 1},
+			{TaskTypeID: "b", Scheduled: 3},
+		}, 8, 4},
+	}
+	for _, c := range cases {
+		if got := total(Compute(c.demands, c.max)); got != c.want {
+			t.Errorf("%s: allocated %d workers, want %d", c.name, got, c.want)
+		}
 	}
 }
 
@@ -95,7 +123,7 @@ func TestProportionalDistribution(t *testing.T) {
 		{TaskTypeID: "a", Scheduled: 30},
 		{TaskTypeID: "b", Scheduled: 10},
 	}
-	plan := Compute(demands, 1, 8)
+	plan := Compute(demands, 8)
 	if total(plan) != 8 {
 		t.Fatalf("expected 8 total, got %d (%v)", total(plan), plan)
 	}

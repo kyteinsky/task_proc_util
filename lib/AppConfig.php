@@ -19,7 +19,6 @@ use OCP\IAppConfig;
  * supervisor through the config controller.
  */
 class AppConfig {
-	public const KEY_MIN_WORKERS = 'min_workers';
 	public const KEY_MAX_WORKERS = 'max_workers';
 	public const KEY_POLL_INTERVAL = 'poll_interval';
 
@@ -37,21 +36,12 @@ class AppConfig {
 	/** Public API field name, kept stable for the admin UI and the OCS shape. */
 	public const FIELD_ENABLED = 'enabled';
 
-	private const DEFAULT_MIN_WORKERS = 1;
 	private const DEFAULT_MAX_WORKERS = 4;
 	private const DEFAULT_POLL_INTERVAL = 10;
 
 	public function __construct(
 		private IAppConfig $appConfig,
 	) {
-	}
-
-	public function getMinWorkers(): int {
-		return $this->appConfig->getValueInt(Application::APP_ID, self::KEY_MIN_WORKERS, self::DEFAULT_MIN_WORKERS);
-	}
-
-	public function setMinWorkers(int $value): void {
-		$this->appConfig->setValueInt(Application::APP_ID, self::KEY_MIN_WORKERS, max(0, $value));
 	}
 
 	public function getMaxWorkers(): int {
@@ -79,11 +69,10 @@ class AppConfig {
 	}
 
 	/**
-	 * @return array{min_workers: int, max_workers: int, poll_interval: int, enabled: bool}
+	 * @return array{max_workers: int, poll_interval: int, enabled: bool}
 	 */
 	public function toArray(): array {
 		return [
-			self::KEY_MIN_WORKERS => $this->getMinWorkers(),
 			self::KEY_MAX_WORKERS => $this->getMaxWorkers(),
 			self::KEY_POLL_INTERVAL => $this->getPollInterval(),
 			self::FIELD_ENABLED => $this->isEnabled(),
