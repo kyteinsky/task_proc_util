@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Sources (only built artifacts ship)
+/src
+/supervisor
+/node_modules
+
+# Build tooling
+/build
+/Makefile
+/krankerl.toml
+/package.json
+/package-lock.json
+/vite.config.js
+/composer.json
+/composer.lock
+/.nextcloudignore
+
+# VCS / dev
+/.git
+/.github
+/.vscode
+/.gitignore
+/tests

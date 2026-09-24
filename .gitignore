@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+/build/
+# Compiled supervisor binaries are build output; the arch-dispatch wrapper
+# alongside them is source and must stay tracked.
+/bin/*/
+/js/
+/node_modules/
+/vendor/
+.php-cs-fixer.cache
+/vendor-bin/*/vendor/

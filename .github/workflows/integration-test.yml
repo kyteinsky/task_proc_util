@@ -1,0 +1,217 @@
+# SPDX-FileCopyrightText: 2026 Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: Integration test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: integration-test-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php-versions: ['8.2']
+        server-versions: ['stable33', 'stable34']
+        include:
+          - php-versions: '8.3'
+            server-versions: 'master'
+
+    name: Integration 🐘${{ matrix.php-versions }} ☁️${{ matrix.server-versions }}
+
+    env:
+      NC_ADMIN_USER: admin
+      NC_ADMIN_PASS: password
+      NC_URL: http://localhost:8080
+
+    steps:
+      - name: Checkout server
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: nextcloud/server
+          ref: ${{ matrix.server-versions }}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up php ${{ matrix.php-versions }}
+        uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # 2.37.1
+        with:
+          php-version: ${{ matrix.php-versions }}
+          extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
+          coverage: none
+
+      - name: Checkout app
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          path: apps/task_proc_util
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: apps/task_proc_util/supervisor/go.mod
+          cache: false
+
+      - name: Build supervisor binary
+        run: |
+          cd apps/task_proc_util
+          make supervisor
+
+      - name: Install Nextcloud
+        run: |
+          mkdir -p data
+          php occ maintenance:install \
+            --verbose \
+            --database=sqlite \
+            --database-name=nextcloud \
+            --admin-user="$NC_ADMIN_USER" \
+            --admin-pass="$NC_ADMIN_PASS"
+          php -S 0.0.0.0:8080 &
+          # wait for the server to be up
+          for i in $(seq 1 20); do
+            curl -sf "$NC_URL/status.php" && break || sleep 1
+          done
+
+      - name: Enable apps
+        run: |
+          php occ app:enable testing
+          php occ app:enable task_proc_util
+
+      - name: Verify testing provider is registered
+        run: |
+          php occ taskprocessing:worker --help
+          TYPES=$(curl -sf -u "$NC_ADMIN_USER:$NC_ADMIN_PASS" \
+            -H "OCS-APIRequest: true" \
+            "$NC_URL/ocs/v2.php/taskprocessing/tasktypes?format=json")
+          echo "$TYPES"
+          echo "$TYPES" | jq -e '.ocs.data.types | has("core:text2text")'
+
+      - name: Start supervisor
+        run: |
+          # min=1, max=4, poll_interval=3 so the test doesn't wait long
+          php occ config:app:set task_proc_util poll_interval --value=3
+          php occ config:app:set task_proc_util min_workers --value=1
+          # 8 slots: enough to give 2 workers/type under load, letting the
+          # scheduler's proportional distribution kick in
+          php occ config:app:set task_proc_util max_workers --value=8
+
+          chmod +x apps/task_proc_util/bin/task_proc_util-supervisor \
+                   apps/task_proc_util/bin/amd64/task_proc_util-supervisor
+          apps/task_proc_util/bin/task_proc_util-supervisor \
+            --occ "php occ" \
+            --worker-timeout=60 \
+            config/config.php \
+            > /tmp/supervisor.log 2>&1 &
+          echo "SUPERVISOR_PID=$!" >> "$GITHUB_ENV"
+          # Give the supervisor one poll cycle to start workers
+          sleep 5
+
+      # Schedule tasks across 4 task types with an intentionally uneven distribution
+      # to exercise the scheduler's starvation-prevention logic:
+      #   core:text2text         — 6 tasks (dominant type, must not starve others)
+      #   core:text2text:summary — 3 tasks
+      #   core:text2text:chat    — 3 tasks
+      #   core:text2text:translate — 2 tasks
+      # Total: 14 tasks, all with trivial fake providers that complete instantly.
+      # Success criteria: every task reaches STATUS_SUCCESSFUL within 30s total.
+      # With poll_interval=3s and instant providers this should finish in <15s;
+      # 30s is a generous CI margin. A 60s deadline would hide a broken supervisor.
+      - name: Schedule tasks across 4 types and verify fast pickup
+        env:
+          CREDS: "${{ env.NC_ADMIN_USER }}:${{ env.NC_ADMIN_PASS }}"
+        run: |
+          set -euo pipefail
+
+          NC="$NC_URL/ocs/v2.php/taskprocessing"
+
+          schedule() {
+            local type="$1"
+            local body="$2"
+            curl -sf -X POST \
+              -u "$CREDS" \
+              -H "OCS-APIRequest: true" \
+              -H "Content-Type: application/json" \
+              "$NC/schedule?format=json" \
+              --data-raw "{\"input\":$body,\"type\":\"$type\",\"appId\":\"integration-test\",\"customId\":\"\"}" \
+              | jq -r '.ocs.data.task.id'
+          }
+
+          wait_for_task() {
+            local task_id="$1"
+            local type="$2"
+            # poll_interval=3s + PHP bootstrap per worker; 20s is generous for
+            # a provider whose process() returns immediately.
+            local deadline=20
+            local elapsed=0
+            local status
+            while [ "$elapsed" -lt "$deadline" ]; do
+              status=$(curl -sf \
+                -u "$CREDS" \
+                -H "OCS-APIRequest: true" \
+                "$NC/task/$task_id?format=json" \
+                | jq -r '.ocs.data.task.status')
+              [ "$status" = "STATUS_SUCCESSFUL" ] && { echo "  ✓ task $task_id ($type)"; return 0; }
+              [ "$status" = "STATUS_FAILED" ]     && { echo "  ✗ task $task_id ($type) FAILED"; return 1; }
+              sleep 1
+              elapsed=$((elapsed + 1))
+            done
+            echo "  ✗ task $task_id ($type) timed out after ${deadline}s (last: $status)"
+            return 1
+          }
+
+          task_ids=()
+          declare -A task_types
+
+          schedule_n() {
+            local n="$1" type="$2" body="$3"
+            for _ in $(seq 1 "$n"); do
+              id=$(schedule "$type" "$body")
+              task_ids+=("$id")
+              task_types[$id]="$type"
+              echo "  scheduled $id ($type)"
+            done
+          }
+
+          echo "=== Scheduling 14 tasks across 4 types ==="
+          schedule_n 6 "core:text2text"          '{"input":"hello world"}'
+          schedule_n 3 "core:text2text:summary"   '{"input":"A long article that needs summarising."}'
+          schedule_n 3 "core:text2text:chat"      '{"system_prompt":"You are helpful.","input":"Hi","history":[]}'
+          schedule_n 2 "core:text2text:translate" '{"input":"Bonjour","origin_language":"fr","target_language":"en"}'
+
+          echo ""
+          echo "=== Waiting for all ${#task_ids[@]} tasks (max 30s total) ==="
+          t0=$(date +%s)
+          failed=0
+          for id in "${task_ids[@]}"; do
+            wait_for_task "$id" "${task_types[$id]}" || failed=$((failed + 1))
+          done
+          t1=$(date +%s)
+          elapsed=$((t1 - t0))
+
+          echo ""
+          echo "=== Results: $((${#task_ids[@]} - failed))/${#task_ids[@]} succeeded in ${elapsed}s ==="
+          [ "$failed" -eq 0 ] || { echo "FAIL: $failed task(s) did not complete successfully"; exit 1; }
+          [ "$elapsed" -lt 30 ] || { echo "FAIL: took ${elapsed}s, expected < 30s"; exit 1; }
+
+          echo "PASS: all tasks completed in ${elapsed}s"
+
+      - name: Check supervisor is still running
+        run: |
+          kill -0 "$SUPERVISOR_PID" || { echo "Supervisor died early!"; exit 1; }
+
+      - name: Show logs
+        if: always()
+        run: |
+          echo "=== Supervisor log ==="
+          cat /tmp/supervisor.log || true
+          echo "=== Nextcloud log ==="
+          tail -50 data/nextcloud.log || true

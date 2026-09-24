@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+before_cmds = [
+	"composer install --no-dev --optimize-autoloader",
+	"npm ci",
+	"npm run build",
+	"make supervisor-release",
+]

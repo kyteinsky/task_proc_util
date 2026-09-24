@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Nextcloud contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Architecture dispatcher for the Task Processing Utility supervisor.
+#
+# The app ships one static binary per architecture under bin/<arch>/. This
+# wrapper resolves the host architecture and execs the matching binary, so the
+# systemd ExecStart path is identical on every host.
+
+set -eu
+
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+case "$(uname -m)" in
+	x86_64 | amd64)
+		arch=amd64
+		;;
+	aarch64 | arm64)
+		arch=arm64
+		;;
+	armv6l | armv7l | armv8l | arm)
+		arch=arm
+		;;
+	*)
+		echo "task_proc_util-supervisor: unsupported architecture '$(uname -m)'" >&2
+		echo "Supported: x86_64/amd64, aarch64/arm64, armv6l/armv7l/arm" >&2
+		exit 1
+		;;
+esac
+
+bin="$dir/$arch/task_proc_util-supervisor"
+
+if [ ! -x "$bin" ]; then
+	echo "task_proc_util-supervisor: missing binary for $arch at $bin" >&2
+	echo "Build it with 'make supervisor' (host arch) or 'make supervisor-release' (all)." >&2
+	exit 1
+fi
+
+exec "$bin" "$@"

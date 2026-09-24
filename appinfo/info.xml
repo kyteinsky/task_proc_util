@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<!--
+  - SPDX-FileCopyrightText: 2026 Nextcloud contributors
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+	<id>task_proc_util</id>
+	<name>Task Processing Utility</name>
+	<summary>Auto-scales Task Processing workers based on the queue</summary>
+	<description><![CDATA[
+A persistent supervisor service that scales the number of Task Processing
+PHP workers up and down between an admin-configurable minimum and maximum,
+based on the size of the Task Processing queue. Each task type is scheduled
+fairly so that a flood of one task type cannot starve the others.
+
+The supervisor is a single static binary (written in Go) that reads the task
+queue directly from the Nextcloud database and spawns long-lived PHP workers,
+each pinned to one task type and recycled periodically to pick up config
+changes.
+	]]></description>
+	<version>0.1.0</version>
+	<licence>agpl</licence>
+	<author mail="dev@example.com">Nextcloud contributors</author>
+	<namespace>TaskProcUtil</namespace>
+	<category>tools</category>
+	<category>integration</category>
+	<bugs>https://github.com/kyteinsky/task_proc_util/issues</bugs>
+	<dependencies>
+		<nextcloud min-version="33" max-version="35"/>
+	</dependencies>
+	<commands>
+		<command>OCA\TaskProcUtil\Command\Run</command>
+	</commands>
+	<settings>
+		<admin>OCA\TaskProcUtil\Settings\AdminSettings</admin>
+	</settings>
+</info>
