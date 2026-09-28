@@ -14,7 +14,9 @@ concurrency:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest-low
+    # Nextcloud-org repos should use `ubuntu-latest-low` here: that label resolves
+    # to the org's own runner group, which this repository has no access to.
+    runs-on: ubuntu-slim
     permissions:
       contents: read
       pull-requests: read
@@ -76,7 +78,7 @@ jobs:
   summary:
     permissions:
       contents: none
-    runs-on: ubuntu-latest-low
+    runs-on: ubuntu-slim
     needs: [changes, test]
 
     if: always()

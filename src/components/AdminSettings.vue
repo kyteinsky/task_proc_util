@@ -3,17 +3,20 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <template>
-	<NcSettingsSection :name="t('task_proc_util', 'Task Processing auto-scaler')"
+	<NcSettingsSection
+		:name="t('task_proc_util', 'Task Processing auto-scaler')"
 		:description="t('task_proc_util', 'Automatically scale the number of Task Processing workers based on the size of the task queue. Tasks of every type are scheduled fairly so a flood of one type cannot starve the others.')">
 		<div class="tpu-settings">
-			<NcCheckboxRadioSwitch :model-value="config.enabled"
+			<NcCheckboxRadioSwitch
+				:model-value="config.enabled"
 				type="switch"
 				@update:model-value="onToggleEnabled">
 				{{ t('task_proc_util', 'Enable the auto-scaler') }}
 			</NcCheckboxRadioSwitch>
 
 			<div class="tpu-field">
-				<NcTextField v-model="maxWorkersStr"
+				<NcTextField
+					v-model="maxWorkersStr"
 					type="number"
 					:label="t('task_proc_util', 'Maximum workers')"
 					:helper-text="t('task_proc_util', 'Upper bound on concurrent workers across all task types')"
@@ -22,7 +25,8 @@
 			</div>
 
 			<div class="tpu-field">
-				<NcTextField v-model="pollIntervalStr"
+				<NcTextField
+					v-model="pollIntervalStr"
 					type="number"
 					:label="t('task_proc_util', 'Poll interval (seconds)')"
 					:helper-text="t('task_proc_util', 'How often the supervisor checks the queue')"
@@ -30,29 +34,30 @@
 					@update:model-value="onChange" />
 			</div>
 
-			<p v-if="error" class="tpu-error">{{ error }}</p>
+			<p v-if="error" class="tpu-error">
+				{{ error }}
+			</p>
 		</div>
 	</NcSettingsSection>
 </template>
 
 <script>
-import { loadState } from '@nextcloud/initial-state'
-import { generateOcsUrl } from '@nextcloud/router'
-import { showError, showSuccess } from '@nextcloud/dialogs'
-import { translate as t } from '@nextcloud/l10n'
 import axios from '@nextcloud/axios'
-
+import { showError, showSuccess } from '@nextcloud/dialogs'
+import { loadState } from '@nextcloud/initial-state'
+import { translate as t } from '@nextcloud/l10n'
+import { generateOcsUrl } from '@nextcloud/router'
+import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 import NcSettingsSection from '@nextcloud/vue/components/NcSettingsSection'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
-import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 
 /**
  * Returns a debounced version of `fn` that delays invocation until `ms`
  * milliseconds have elapsed since the last call.
  *
- * @param {Function} fn the function to debounce
+ * @param {(...args: unknown[]) => void} fn the function to debounce
  * @param {number} ms the debounce delay in milliseconds
- * @return {Function} the debounced function
+ * @return {(...args: unknown[]) => void} the debounced function
  */
 function debounce(fn, ms = 600) {
 	let timeout

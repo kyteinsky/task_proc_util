@@ -16,7 +16,9 @@ permissions:
 
 jobs:
   reuse-compliance-check:
-    runs-on: ubuntu-latest-low
+    # Nextcloud-org repos should use `ubuntu-latest-low` here: that label resolves
+    # to the org's own runner group, which this repository has no access to.
+    runs-on: ubuntu-slim
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
