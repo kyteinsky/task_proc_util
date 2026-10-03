@@ -1,29 +1,116 @@
 # SPDX-FileCopyrightText: 2026 Nextcloud contributors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+# Shared conventions across every ecosystem below:
+#  - Updates land on Saturday night, so a broken bump is noticed before the
+#    working week rather than during it.
+#  - A 14 day cooldown keeps a release out of a pull request until it has had
+#    time to be yanked or patched upstream. GitHub's own default is 3 days.
+#  - Commit prefixes follow Conventional Commits, which the "Block
+#    unconventional commits" workflow enforces: "build" for shipped code
+#    dependencies, "ci" for tooling that never reaches a release.
 version: 2
 updates:
+  # Composer: shipped code dependencies.
+  - package-ecosystem: "composer"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "saturday"
+      time: "03:00"
+      timezone: "Europe/Berlin"
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    versioning-strategy: "increase"
+    cooldown:
+      default-days: 14
+      # nextcloud/ocp is a stub package regenerated from the server branch this
+      # app targets. It is updated by update-nextcloud-ocp.yml, so holding it
+      # back here would only create a second, slower source of the same bump.
+      exclude:
+        - "nextcloud/ocp"
+
+  # Composer: lint and analysis tooling, never shipped.
+  - package-ecosystem: "composer"
+    directories:
+      - "/vendor-bin/php-cs-fixer"
+      - "/vendor-bin/psalm"
+    schedule:
+      interval: "weekly"
+      day: "saturday"
+      time: "03:00"
+      timezone: "Europe/Berlin"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    versioning-strategy: "increase"
+    cooldown:
+      default-days: 14
+
   - package-ecosystem: "gomod"
     directory: "/supervisor"
     schedule:
       interval: "weekly"
+      day: "saturday"
+      time: "03:00"
+      timezone: "Europe/Berlin"
     commit-message:
       prefix: "build"
       include: "scope"
+    groups:
+      # modernc.org/sqlite drags in libc and memory in lockstep; separate pull
+      # requests for them fail to build on their own.
+      modernc:
+        patterns:
+          - "modernc.org/*"
+    cooldown:
+      default-days: 14
 
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "saturday"
+      time: "03:00"
+      timezone: "Europe/Berlin"
     commit-message:
       prefix: "build"
       prefix-development: "build"
       include: "scope"
+    versioning-strategy: "increase"
+    groups:
+      nextcloud:
+        patterns:
+          - "@nextcloud/*"
+    cooldown:
+      default-days: 14
+      # @nextcloud/* packages are first-party and released often, usually to
+      # track a server change this app needs. Waiting two weeks on them delays
+      # the fixes rather than de-risking them.
+      exclude:
+        - "@nextcloud/*"
 
+  # github-actions supports only cooldown.default-days, not the semver-bump
+  # variants, and has no versioning-strategy.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "saturday"
+      time: "03:00"
+      timezone: "Europe/Berlin"
     commit-message:
       prefix: "ci"
       include: "scope"
+    groups:
+      # One pull request for routine action bumps instead of one per action;
+      # these are pinned by SHA and reviewed together.
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    cooldown:
+      default-days: 14
