@@ -3,10 +3,12 @@ SPDX-PackageName = "task_proc_util"
 SPDX-PackageSupplier = "Nextcloud <info@nextcloud.com>"
 SPDX-PackageDownloadLocation = "https://github.com/kyteinsky/task_proc_util"
 
-# Dependency manifests and lockfiles. These are machine-generated and/or plain
-# JSON, which has no comment syntax, so they cannot carry an inline SPDX header.
+# Files that cannot carry an inline SPDX header: screenshots are binary, and
+# the dependency manifests and lockfiles are machine-generated and/or plain
+# JSON, which has no comment syntax.
 [[annotations]]
 path = [
+  "assets/**",
   "composer.json",
   "composer.lock",
   "package.json",

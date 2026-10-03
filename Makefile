@@ -75,6 +75,7 @@ appstore: clean build
 	rsync -a --delete \
 		--exclude='/.git' \
 		--exclude='/.github' \
+		--exclude='/assets' \
 		--exclude='/build' \
 		--exclude='/supervisor' \
 		--exclude='/src' \

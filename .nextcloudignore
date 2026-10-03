@@ -23,3 +23,6 @@
 /.vscode
 /.gitignore
 /tests
+
+# The app store reads the screenshot from the URL in info.xml
+/assets
