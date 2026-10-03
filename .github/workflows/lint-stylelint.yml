@@ -18,10 +18,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+      pull-requests: read
+
+    outputs:
+      src: ${{ steps.changes.outputs.src }}
+
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: changes
+        continue-on-error: true
+        with:
+          filters: |
+            src:
+              - '.github/workflows/lint-stylelint.yml'
+              - 'src/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'stylelint.config.*'
+              - '**.css'
+              - '**.scss'
+              - '**.vue'
+
   lint:
     runs-on: ubuntu-latest
 
-    name: stylelint
+    needs: changes
+    if: needs.changes.outputs.src != 'false'
+
+    name: NPM stylelint
 
     steps:
       - name: Checkout
@@ -51,3 +79,18 @@ jobs:
 
       - name: Lint
         run: npm run stylelint
+
+  summary:
+    permissions:
+      contents: none
+    runs-on: ubuntu-slim
+    needs: [changes, lint]
+
+    if: always()
+
+    # This is the summary, we just avoid to rename it so that branch protection rules still match
+    name: stylelint
+
+    steps:
+      - name: Summary status
+        run: if ${{ needs.changes.outputs.src != 'false' && needs.lint.result != 'success' }}; then exit 1; fi

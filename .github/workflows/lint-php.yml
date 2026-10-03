@@ -18,8 +18,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+      pull-requests: read
+
+    outputs:
+      src: ${{ steps.changes.outputs.src }}
+
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: changes
+        continue-on-error: true
+        with:
+          filters: |
+            src:
+              - '.github/workflows/lint-php.yml'
+              - 'appinfo/info.xml'
+              - 'composer.json'
+              - 'composer.lock'
+              - '**.php'
+
   matrix:
-    runs-on: ubuntu-latest-low
+    # Nextcloud-org repos should use `ubuntu-latest-low` here: that label resolves
+    # to the org's own runner group, which this repository has no access to.
+    runs-on: ubuntu-slim
+
+    needs: changes
+    if: needs.changes.outputs.src != 'false'
+
     outputs:
       php-min: ${{ steps.versions.outputs.php-min }}
       php-max: ${{ steps.versions.outputs.php-max }}
@@ -49,7 +77,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up php ${{ matrix.php-versions }}
-        uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # 2.37.1
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: ${{ matrix.php-versions }}
           extensions: bz2, ctype, curl, dom, fileinfo, gd, iconv, intl, json, libxml, mbstring, openssl, pcntl, posix, session, simplexml, xmlreader, xmlwriter, zip, zlib, sqlite, pdo_sqlite
@@ -64,8 +92,8 @@ jobs:
   summary:
     permissions:
       contents: none
-    runs-on: ubuntu-latest-low
-    needs: php-lint
+    runs-on: ubuntu-slim
+    needs: [changes, php-lint]
 
     if: always()
 
@@ -73,4 +101,4 @@ jobs:
 
     steps:
       - name: Summary status
-        run: if ${{ needs.php-lint.result != 'success' && needs.php-lint.result != 'skipped' }}; then exit 1; fi
+        run: if ${{ needs.changes.outputs.src != 'false' && needs.php-lint.result != 'success' }}; then exit 1; fi

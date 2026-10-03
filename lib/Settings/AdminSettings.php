@@ -26,7 +26,7 @@ class AdminSettings implements IDelegatedSettings {
 
 	#[\Override]
 	public function getForm(): TemplateResponse {
-		$this->initialState->provideInitialState('config', $this->config->toArray());
+		$this->initialState->provideInitialState('config', $this->config);
 		return new TemplateResponse(Application::APP_ID, 'adminSettings');
 	}
 

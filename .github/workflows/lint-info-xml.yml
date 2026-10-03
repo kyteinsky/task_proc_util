@@ -18,10 +18,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  xml-linters:
-    runs-on: ubuntu-latest-low
+  changes:
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+      pull-requests: read
 
-    name: info.xml lint
+    outputs:
+      src: ${{ steps.changes.outputs.src }}
+
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: changes
+        continue-on-error: true
+        with:
+          filters: |
+            src:
+              - '.github/workflows/lint-info-xml.yml'
+              - 'appinfo/info.xml'
+
+  xml-linters:
+    runs-on: ubuntu-latest
+
+    needs: changes
+    if: needs.changes.outputs.src != 'false'
+
+    name: info.xml lint check
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -36,3 +58,18 @@ jobs:
         with:
           xml-file: ./appinfo/info.xml
           xml-schema-file: ./info.xsd
+
+  summary:
+    permissions:
+      contents: none
+    runs-on: ubuntu-slim
+    needs: [changes, xml-linters]
+
+    if: always()
+
+    # This is the summary, we just avoid to rename it so that branch protection rules still match
+    name: info.xml lint
+
+    steps:
+      - name: Summary status
+        run: if ${{ needs.changes.outputs.src != 'false' && needs.xml-linters.result != 'success' }}; then exit 1; fi

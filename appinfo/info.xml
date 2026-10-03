@@ -27,7 +27,7 @@ changes.
 	<category>integration</category>
 	<bugs>https://github.com/kyteinsky/task_proc_util/issues</bugs>
 	<dependencies>
-		<nextcloud min-version="33" max-version="35"/>
+		<nextcloud min-version="33" max-version="36"/>
 	</dependencies>
 	<commands>
 		<command>OCA\TaskProcUtil\Command\Run</command>

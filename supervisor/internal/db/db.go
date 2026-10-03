@@ -213,7 +213,6 @@ func (d *DB) ListTaskTypes(ctx context.Context) ([]string, error) {
 
 // SupervisorConfig is the admin-tunable config stored in oc_appconfig.
 type SupervisorConfig struct {
-	MinWorkers   int
 	MaxWorkers   int
 	PollInterval int
 	Enabled      bool
@@ -222,7 +221,6 @@ type SupervisorConfig struct {
 // GetConfig reads supervisor settings from oc_appconfig.
 func (d *DB) GetConfig(ctx context.Context) (SupervisorConfig, error) {
 	cfg := SupervisorConfig{
-		MinWorkers:   1,
 		MaxWorkers:   4,
 		PollInterval: 10,
 		Enabled:      true,
@@ -241,10 +239,6 @@ func (d *DB) GetConfig(ctx context.Context) (SupervisorConfig, error) {
 			return cfg, err
 		}
 		switch k {
-		case "min_workers":
-			if n, err := strconv.Atoi(v); err == nil {
-				cfg.MinWorkers = n
-			}
 		case "max_workers":
 			if n, err := strconv.Atoi(v); err == nil {
 				cfg.MaxWorkers = n

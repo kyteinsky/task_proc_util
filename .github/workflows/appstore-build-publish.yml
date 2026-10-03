@@ -19,8 +19,14 @@ jobs:
   build_and_publish:
     runs-on: ubuntu-latest
 
-    # Only allowed to be run on nextcloud-releases repositories
-    if: ${{ github.repository_owner == 'nextcloud-releases' }}
+    # Only allowed to be run on the repository that owns the release.
+    #
+    # Nextcloud's own apps live under the `nextcloud-releases` organization,
+    # and upstream this guard reads `== 'nextcloud-releases'` so that forks
+    # cannot publish to the appstore. This app is released from a personal
+    # repository, so the owner is checked against that instead; switch this
+    # back to `nextcloud-releases` if the app moves into that organization.
+    if: ${{ github.repository_owner == 'kyteinsky' }}
 
     steps:
       - name: Check actor permission
@@ -88,7 +94,7 @@ jobs:
           filename: ${{ env.APP_NAME }}/appinfo/info.xml
 
       - name: Set up php ${{ steps.php-versions.outputs.php-min }}
-        uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # 2.37.1
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: ${{ steps.php-versions.outputs.php-min }}
           coverage: none

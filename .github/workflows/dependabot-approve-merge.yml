@@ -25,7 +25,9 @@ concurrency:
 jobs:
   auto-approve-merge:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
-    runs-on: ubuntu-latest-low
+    # Nextcloud-org repos should use `ubuntu-latest-low` here: that label resolves
+    # to the org's own runner group, which this repository has no access to.
+    runs-on: ubuntu-slim
     permissions:
       # for auto-approve step to work
       pull-requests: write
@@ -51,6 +53,8 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: GitHub actions bot approve
+        id: auto_approve
+        continue-on-error: true
         if: startsWith(steps.branchname.outputs.branch, 'dependabot/')
         run: gh pr review --approve "$PR_URL"
         env:
@@ -60,6 +64,11 @@ jobs:
       # Enable GitHub auto merge
       - name: Auto merge
         uses: alexwilson/enable-github-automerge-action@2c32e18a76e0726ffe7a573bfff2d42a20885126 # 3.0.0
-        if: startsWith(steps.branchname.outputs.branch, 'dependabot/') && (github.event.action == 'opened' || github.event.action == 'reopened') && (steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor')
+        if: ${{
+          startsWith(steps.branchname.outputs.branch, 'dependabot/')
+          && steps.auto_approve.outcome == 'success'
+          && (steps.metadata.outputs.update-type == 'version-update:semver-patch'
+            || steps.metadata.outputs.update-type == 'version-update:semver-minor')
+          }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
