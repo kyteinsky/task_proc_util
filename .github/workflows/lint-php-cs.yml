@@ -18,10 +18,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+      pull-requests: read
+
+    outputs:
+      src: ${{ steps.changes.outputs.src }}
+
+    steps:
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: changes
+        continue-on-error: true
+        with:
+          filters: |
+            src:
+              - '.github/workflows/lint-php-cs.yml'
+              - '.php-cs-fixer.dist.php'
+              - 'appinfo/info.xml'
+              - 'composer.json'
+              - 'composer.lock'
+              - 'vendor-bin/php-cs-fixer/**'
+              - '**.php'
+
   lint:
     runs-on: ubuntu-latest
 
-    name: php-cs
+    needs: changes
+    if: needs.changes.outputs.src != 'false'
+
+    name: php-cs check
 
     steps:
       - name: Checkout
@@ -50,3 +77,18 @@ jobs:
 
       - name: Lint
         run: composer run cs:check || ( echo 'Please run `composer run cs:fix` to format your code' && exit 1 )
+
+  summary:
+    permissions:
+      contents: none
+    runs-on: ubuntu-slim
+    needs: [changes, lint]
+
+    if: always()
+
+    # This is the summary, we just avoid to rename it so that branch protection rules still match
+    name: php-cs
+
+    steps:
+      - name: Summary status
+        run: if ${{ needs.changes.outputs.src != 'false' && needs.lint.result != 'success' }}; then exit 1; fi
