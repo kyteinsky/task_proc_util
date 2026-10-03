@@ -55,7 +55,7 @@ The README file gives the complete systemd unit, the requirements, and all the
 flags and environment variables:
 https://github.com/kyteinsky/task_proc_util#setup
 	]]></description>
-	<version>0.1.1</version>
+	<version>0.1.2</version>
 	<licence>agpl</licence>
 	<author mail="kyteinsky@gmail.com">Anupam Kumar</author>
 	<namespace>TaskProcUtil</namespace>

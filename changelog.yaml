@@ -19,6 +19,20 @@ release_agent:
   - author: "^dependabot\\[bot\\]$"
   - message: "^chore\\(changelog\\):"
 entries:
+- version: 0.1.2
+  release_date: '2026-10-04'
+  sections:
+  - name: Changed
+    items:
+    - text: update info.xml and readme instructions + add screenshot
+      authors:
+      - kyteinsky
+  - name: Fixed
+    items:
+    - text: ignore async providers for config reload interval
+      authors:
+      - kyteinsky
+      issue_number: 25
 - version: 0.1.1
   release_date: '2026-10-03'
   sections:
