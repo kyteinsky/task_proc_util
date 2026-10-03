@@ -1,0 +1,21 @@
+version = 1
+SPDX-PackageName = "task_proc_util"
+SPDX-PackageSupplier = "Nextcloud <info@nextcloud.com>"
+SPDX-PackageDownloadLocation = "https://github.com/kyteinsky/task_proc_util"
+
+# Dependency manifests and lockfiles. These are machine-generated and/or plain
+# JSON, which has no comment syntax, so they cannot carry an inline SPDX header.
+[[annotations]]
+path = [
+  "composer.json",
+  "composer.lock",
+  "package.json",
+  "package-lock.json",
+  "supervisor/go.mod",
+  "supervisor/go.sum",
+  "vendor-bin/**/composer.json",
+  "vendor-bin/**/composer.lock",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Nextcloud contributors"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
