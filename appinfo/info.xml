@@ -19,7 +19,7 @@ queue directly from the Nextcloud database and spawns long-lived PHP workers,
 each pinned to one task type and recycled periodically to pick up config
 changes.
 	]]></description>
-	<version>0.1.0</version>
+	<version>0.1.1</version>
 	<licence>agpl</licence>
 	<author mail="dev@example.com">Nextcloud contributors</author>
 	<namespace>TaskProcUtil</namespace>

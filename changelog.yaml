@@ -19,6 +19,14 @@ release_agent:
   - author: "^dependabot\\[bot\\]$"
   - message: "^chore\\(changelog\\):"
 entries:
+- version: 0.1.1
+  release_date: '2026-10-03'
+  sections:
+  - name: Fixed
+    items:
+    - text: use -buildvcs=false for krankerl CI builds
+      authors:
+      - kyteinsky
 - version: 0.1.0
   release_date: '2026-10-03'
   sections:
