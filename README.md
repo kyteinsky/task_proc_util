@@ -100,7 +100,7 @@ All the settings are in the **AI** section of the administrator settings.
 | Enable          | on      | `autoscale_enabled`  | The main switch. When it is off, all the workers stop. |
 | Maximum workers | 4       | `max_workers`        | The maximum number of workers for all the task types together. |
 | Poll interval   | 10 s    | `poll_interval`      | The interval between two examinations of the queue. |
-| Config reload interval | 300 s   | `config_interval`    | The interval between two examinations of these settings. A change of a setting becomes effective after this interval at the most. |
+| Config reload interval | 300 s   | `config_interval`    | The interval between two examinations of these settings. A change of a setting becomes effective after this interval at the most. The supervisor also examines the task types without a synchronous provider again at this interval. |
 
 The supervisor starts workers only for the task types that have work. When there is no work, the number of workers becomes zero. A task type gets no more workers than the number of tasks of that type. Therefore `max_workers` is the setting that controls the performance.
 
@@ -180,6 +180,8 @@ At each **poll interval** (the default value is 10 s) the supervisor does these 
 
 At each **config reload interval** (the default value is 300 s) the supervisor reads the configuration of the administrator again. The configuration contains the maximum number of workers, the two intervals, and the enable switch. A restart is not necessary. But a change does not become effective immediately. The supervisor uses the new value at the next config reload interval, thus after 300 s at the most. If you want a change to become effective more quickly, decrease the config reload interval.
 
+At the same interval, the supervisor examines the task types that have no synchronous provider again. The section [The PHP Worker Command](#the-php-worker-command) gives the details.
+
 The supervisor also reads the configuration one time when it starts. Thus the first poll uses the correct settings.
 
 If the database shows an error at a config reload interval, the supervisor keeps the previous values and continues to operate.
@@ -212,7 +214,11 @@ level=WARN msg="task type has no preferred synchronous provider; not starting fu
   taskType=core:text2text stderr="No preferred synchronous provider for task type core:text2text; ..."
 ```
 
-The supervisor examines these task types again when the administrator changes the configuration. Thus a new provider becomes effective without a restart of the supervisor.
+The supervisor removes these task types from the calculation of the workers. The queue in the database shows no difference between the two kinds of task, thus the query cannot identify them. The supervisor identifies them only after a worker stops with exit code `3`. From that moment, the tasks of these types get no part of the maximum number of workers. All the workers go to the task types that can use them.
+
+The supervisor examines these task types again at each config reload interval. Thus it examines them every 300 s with the default value. A restart is not necessary.
+
+The administrator can change the provider of a task type from asynchronous to synchronous. The supervisor starts workers for that type again after the next config reload interval. The supervisor cannot see this change directly. Nextcloud keeps the name of the provider of each task type in the database, but the name does not show the kind of the provider. Only a PHP process that starts Nextcloud can get this information. Therefore the supervisor examines all the task types in this condition again at each config reload interval.
 
 Two or more workers operate at the same time. Each worker takes a task with one atomic operation. Thus two workers do not take the same task.
 
