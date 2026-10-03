@@ -67,7 +67,6 @@ jobs:
         if: ${{
           startsWith(steps.branchname.outputs.branch, 'dependabot/')
           && steps.auto_approve.outcome == 'success'
-          && (github.event.action == 'opened' || github.event.action == 'reopened')
           && (steps.metadata.outputs.update-type == 'version-update:semver-patch'
             || steps.metadata.outputs.update-type == 'version-update:semver-minor')
           }}
