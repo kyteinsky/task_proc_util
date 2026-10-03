@@ -92,37 +92,46 @@ type QueueStats struct {
 	Running   int
 }
 
-// GetQueueStats returns scheduled and running task counts for the given task
-// type ID. If taskTypeID is empty, counts all task types.
-func (d *DB) GetQueueStats(ctx context.Context, taskTypeID string) (QueueStats, error) {
-	var stats QueueStats
-	var err error
-	stats.Scheduled, err = d.countByStatus(ctx, statusScheduled, taskTypeID)
-	if err != nil {
-		return QueueStats{}, err
-	}
-	stats.Running, err = d.countByStatus(ctx, statusRunning, taskTypeID)
-	if err != nil {
-		return QueueStats{}, err
-	}
-	return stats, nil
-}
-
-func (d *DB) countByStatus(ctx context.Context, status int, taskTypeID string) (int, error) {
+// GetQueueStats returns the scheduled and running task counts for every task
+// type that has at least one of either.
+//
+// This is one grouped query rather than a type listing followed by two counts
+// per type: the poll loop runs every few seconds, so the round trips dominate
+// its cost. It also makes the snapshot atomic — separate queries can observe a
+// task after it moves SCHEDULED -> RUNNING and count it twice, or miss it
+// entirely, which shows up as workers flapping between polls.
+//
+// Task types with no outstanding work are absent from the result; they need no
+// workers, so there is nothing to report.
+func (d *DB) GetQueueStats(ctx context.Context) (map[string]QueueStats, error) {
 	table := d.prefix + "taskprocessing_tasks"
-	var row *sql.Row
-	if taskTypeID == "" {
-		row = d.db.QueryRowContext(ctx,
-			d.rebind(fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE status = ?", table)), status)
-	} else {
-		row = d.db.QueryRowContext(ctx,
-			d.rebind(fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE status = ? AND type = ?", table)), status, taskTypeID)
+	rows, err := d.db.QueryContext(ctx,
+		d.rebind(fmt.Sprintf(
+			"SELECT type, status, COUNT(*) FROM %s WHERE status IN (?, ?) GROUP BY type, status",
+			table)),
+		statusScheduled, statusRunning)
+	if err != nil {
+		return nil, fmt.Errorf("queue stats: %w", err)
 	}
-	var n int
-	if err := row.Scan(&n); err != nil {
-		return 0, fmt.Errorf("count tasks (status=%d type=%q): %w", status, taskTypeID, err)
+	defer rows.Close()
+
+	byType := make(map[string]QueueStats)
+	for rows.Next() {
+		var taskType string
+		var status, n int
+		if err := rows.Scan(&taskType, &status, &n); err != nil {
+			return nil, fmt.Errorf("queue stats: %w", err)
+		}
+		stats := byType[taskType]
+		switch status {
+		case statusScheduled:
+			stats.Scheduled = n
+		case statusRunning:
+			stats.Running = n
+		}
+		byType[taskType] = stats
 	}
-	return n, nil
+	return byType, rows.Err()
 }
 
 // RunningTaskIDs returns the IDs of tasks currently RUNNING for a task type.
@@ -187,28 +196,6 @@ func (d *DB) FailRunningTasks(ctx context.Context, taskTypeID, errMsg string, ex
 		return 0, fmt.Errorf("fail running tasks (type=%q): rows affected: %w", taskTypeID, err)
 	}
 	return int(n), nil
-}
-
-// ListTaskTypes returns the distinct task type IDs that have at least one
-// scheduled or running task.
-func (d *DB) ListTaskTypes(ctx context.Context) ([]string, error) {
-	table := d.prefix + "taskprocessing_tasks"
-	rows, err := d.db.QueryContext(ctx,
-		d.rebind(fmt.Sprintf("SELECT DISTINCT type FROM %s WHERE status IN (?, ?)", table)),
-		statusScheduled, statusRunning)
-	if err != nil {
-		return nil, fmt.Errorf("list task types: %w", err)
-	}
-	defer rows.Close()
-	var types []string
-	for rows.Next() {
-		var t string
-		if err := rows.Scan(&t); err != nil {
-			return nil, err
-		}
-		types = append(types, t)
-	}
-	return types, rows.Err()
 }
 
 // SupervisorConfig is the admin-tunable config stored in oc_appconfig.

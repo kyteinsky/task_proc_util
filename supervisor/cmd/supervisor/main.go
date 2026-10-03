@@ -217,20 +217,15 @@ func (s *supervisor) poll(ctx context.Context) {
 		return
 	}
 
-	taskTypes, err := s.ncDB.ListTaskTypes(cctx)
+	queueStats, err := s.ncDB.GetQueueStats(cctx)
 	if err != nil {
-		s.logger.Warn("failed to list task types", "err", err)
+		s.logger.Warn("failed to fetch queue stats", "err", err)
 		return
 	}
 
 	running := s.workerPool.Running()
-	demands := make([]scheduler.Demand, 0, len(taskTypes))
-	for _, id := range taskTypes {
-		stats, err := s.ncDB.GetQueueStats(cctx, id)
-		if err != nil {
-			s.logger.Warn("failed to fetch queue stats", "taskType", id, "err", err)
-			continue
-		}
+	demands := make([]scheduler.Demand, 0, len(queueStats))
+	for id, stats := range queueStats {
 		demands = append(demands, scheduler.Demand{
 			TaskTypeID: id,
 			Scheduled:  stats.Scheduled,

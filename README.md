@@ -35,7 +35,7 @@ The supervisor operates two loops. The task queue changes continuously, but the 
 
 At each **poll interval** (the default value is 10 s) the supervisor does these steps:
 
-1. It finds the task types that have tasks in the scheduled state or the running state. Then it reads the number of tasks of each of these types from the database.
+1. It reads the number of tasks in the scheduled state and the running state for each task type.
 2. It calculates the number of workers for each task type:
    - Each task type that has work gets a minimum of one worker. Thus all the task types that have work get a worker.
    - The supervisor divides the remaining workers in proportion to the quantity of work. It uses the largest-remainder method.
