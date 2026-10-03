@@ -123,6 +123,68 @@ func TestRebindPlaceholders(t *testing.T) {
 	}
 }
 
+// One grouped query must fold rows into the right per-type, per-status cells.
+// Statuses other than SCHEDULED and RUNNING create no demand and must not
+// appear at all, or finished work would keep workers alive forever.
+func TestGetQueueStatsGroupsByTypeAndStatus(t *testing.T) {
+	d := newTestDB(t)
+	rows := []struct {
+		id     int
+		typ    string
+		status int
+	}{
+		{1, "speech2text", statusScheduled},
+		{2, "speech2text", statusScheduled},
+		{3, "speech2text", statusRunning},
+		{4, "text2text", statusRunning},
+		{5, "text2text", statusSuccessful}, // finished: must be ignored
+		{6, "translate", statusFailed},     // finished: type must not appear
+	}
+	for _, r := range rows {
+		if _, err := d.db.Exec(
+			`INSERT INTO oc_taskprocessing_tasks (id, type, status) VALUES (?,?,?)`,
+			r.id, r.typ, r.status); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	byType, err := d.GetQueueStats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]QueueStats{
+		"speech2text": {Scheduled: 2, Running: 1},
+		"text2text":   {Scheduled: 0, Running: 1},
+	}
+	if len(byType) != len(want) {
+		t.Fatalf("got %d task types %v, want %d", len(byType), byType, len(want))
+	}
+	for typ, w := range want {
+		if got := byType[typ]; got != w {
+			t.Errorf("%s = %+v, want %+v", typ, got, w)
+		}
+	}
+}
+
+// An empty queue must yield no task types, so the scheduler plans no workers.
+func TestGetQueueStatsEmptyWhenNothingOutstanding(t *testing.T) {
+	d := newTestDB(t)
+	if _, err := d.db.Exec(
+		`INSERT INTO oc_taskprocessing_tasks (id, type, status) VALUES (1,'speech2text',?)`,
+		statusSuccessful); err != nil {
+		t.Fatal(err)
+	}
+
+	byType, err := d.GetQueueStats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byType) != 0 {
+		t.Errorf("got %v, want no outstanding task types", byType)
+	}
+}
+
 // config_interval is read independently of poll_interval: the two cadences are
 // separate knobs, so setting one must not disturb the other.
 func TestGetConfigReadsIntervalsIndependently(t *testing.T) {

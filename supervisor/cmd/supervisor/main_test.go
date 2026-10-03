@@ -21,7 +21,7 @@ import (
 )
 
 // Query counters, split by the table each loop cadence touches.
-var appconfigReads, taskReads atomic.Int64
+var appconfigReads, taskReads, queueStatReads atomic.Int64
 
 // countingDriver wraps sqlite to tally queries per table. run() takes a
 // concrete *db.DB, so the only seam for observing its database traffic is the
@@ -50,6 +50,11 @@ func (c countingConn) QueryContext(ctx context.Context, q string, a []driver.Nam
 		appconfigReads.Add(1)
 	case strings.Contains(q, "taskprocessing_tasks"):
 		taskReads.Add(1)
+		// The queue stats query specifically, as opposed to the per-worker
+		// RunningTaskIDs snapshot that also hits this table.
+		if strings.Contains(q, "GROUP BY") {
+			queueStatReads.Add(1)
+		}
 	}
 	return c.sqliteConn.QueryContext(ctx, q, a)
 }
@@ -104,6 +109,7 @@ func runFor(t *testing.T, ncDB *db.DB, d time.Duration) {
 	t.Helper()
 	appconfigReads.Store(0)
 	taskReads.Store(0)
+	queueStatReads.Store(0)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// max_workers=0 keeps Reconcile from ever spawning a PHP process.
@@ -136,6 +142,41 @@ func TestConfigIsNotReReadOnEveryPoll(t *testing.T) {
 	// than the interval allows.
 	if taskN < 2 {
 		t.Errorf("task tables read %d times, want the queue polled repeatedly", taskN)
+	}
+}
+
+// Each poll must cost exactly one query against the task table, whatever the
+// number of queued task types. The earlier shape — list the types, then count
+// scheduled and running per type — cost 1+2N round trips per poll and grew
+// with the workload.
+func TestPollCostIsOneQueryRegardlessOfTaskTypes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing-based; runs the real loop")
+	}
+
+	ncDB, writer := newLoopDB(t, 1, 3600)
+	for i, taskType := range []string{"a", "b", "c", "d", "e"} {
+		if _, err := writer.Exec(
+			`INSERT INTO oc_taskprocessing_tasks (id, type, status) VALUES (?,?,?)`,
+			i+1, taskType, 1 /* SCHEDULED */); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	runFor(t, ncDB, 4*time.Second)
+
+	// Four 1s polls over a 4s window: t=0,1,2,3.
+	const polls, taskTypes = 4, 5
+	statsN := queueStatReads.Load()
+	t.Logf("%d task types over %d polls: queue stats queries=%d (old shape: %d)",
+		taskTypes, polls, statsN, polls*(1+2*taskTypes))
+
+	// One grouped query per poll, independent of how many types are queued.
+	if statsN > polls {
+		t.Errorf("queue stats read %d times over %d polls, want at most %d", statsN, polls, polls)
+	}
+	if statsN < 2 {
+		t.Errorf("queue stats read only %d times; the poll loop did not run", statsN)
 	}
 }
 
