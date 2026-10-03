@@ -132,6 +132,10 @@ jobs:
         run: |
           # poll_interval=3 so the test doesn't wait long
           php occ config:app:set task_proc_util poll_interval --value=3
+          # config_interval is the separate, slower cadence for re-reading these
+          # settings. Keep it short here so a mid-run change would be picked up
+          # within the test's deadline rather than 5 minutes later.
+          php occ config:app:set task_proc_util config_interval --value=10
           # 8 slots: enough to give 2 workers/type under load, letting the
           # scheduler's proportional distribution kick in
           php occ config:app:set task_proc_util max_workers --value=8

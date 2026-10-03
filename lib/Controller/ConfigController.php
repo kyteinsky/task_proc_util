@@ -40,7 +40,7 @@ class ConfigController extends OCSController {
 	/**
 	 * Get the current supervisor configuration.
 	 *
-	 * @return DataResponse<Http::STATUS_OK, array{max_workers: int, poll_interval: int, enabled: bool}, array{}>
+	 * @return DataResponse<Http::STATUS_OK, array{max_workers: int, poll_interval: int, config_interval: int, enabled: bool}, array{}>
 	 *
 	 * 200: Configuration returned
 	 */
@@ -56,8 +56,9 @@ class ConfigController extends OCSController {
 	 *
 	 * @param int|null $maxWorkers Maximum number of workers allowed
 	 * @param int|null $pollInterval Seconds between queue polls
+	 * @param int|null $configInterval Seconds between supervisor config re-reads
 	 * @param bool|null $enabled Whether the supervisor should run
-	 * @return DataResponse<Http::STATUS_OK, array{max_workers: int, poll_interval: int, enabled: bool}, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, array{message: string}, array{}>
+	 * @return DataResponse<Http::STATUS_OK, array{max_workers: int, poll_interval: int, config_interval: int, enabled: bool}, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, array{message: string}, array{}>
 	 *
 	 * 200: Configuration saved
 	 * 400: Invalid configuration
@@ -67,6 +68,7 @@ class ConfigController extends OCSController {
 	public function setConfig(
 		?int $maxWorkers = null,
 		?int $pollInterval = null,
+		?int $configInterval = null,
 		?bool $enabled = null,
 	): DataResponse {
 		if ($maxWorkers !== null && $maxWorkers < 1) {
@@ -76,11 +78,28 @@ class ConfigController extends OCSController {
 			);
 		}
 
+		if ($pollInterval !== null && $pollInterval < 1) {
+			return new DataResponse(
+				['message' => 'Poll interval must be at least 1 second'],
+				Http::STATUS_BAD_REQUEST,
+			);
+		}
+
+		if ($configInterval !== null && $configInterval < 1) {
+			return new DataResponse(
+				['message' => 'Config interval must be at least 1 second'],
+				Http::STATUS_BAD_REQUEST,
+			);
+		}
+
 		if ($maxWorkers !== null) {
 			$this->config->setMaxWorkers($maxWorkers);
 		}
 		if ($pollInterval !== null) {
 			$this->config->setPollInterval($pollInterval);
+		}
+		if ($configInterval !== null) {
+			$this->config->setConfigInterval($configInterval);
 		}
 		if ($enabled !== null) {
 			$this->config->setEnabled($enabled);

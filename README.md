@@ -31,15 +31,22 @@ The `supervisor/` directory contains the Go source code. The build makes one bin
 
 A shell script at `bin/task_proc_util-supervisor` reads the architecture with `uname -m`. Then the script starts the correct binary file. Thus the `ExecStart` path in the service file is the same for all architectures.
 
-The supervisor does these steps at each poll interval:
+The supervisor operates two loops. The task queue changes continuously, but the settings of the administrator change only sometimes. Thus the two loops have different intervals.
 
-1. It reads the configuration of the administrator again. The configuration contains the maximum number of workers, the poll interval, and the enable switch. A change becomes effective immediately. A restart is not necessary.
-2. It finds the task types that have tasks in the scheduled state or the running state. Then it reads the number of tasks of each of these types from the database.
-3. It calculates the number of workers for each task type:
+At each **poll interval** (the default value is 10 s) the supervisor does these steps:
+
+1. It finds the task types that have tasks in the scheduled state or the running state. Then it reads the number of tasks of each of these types from the database.
+2. It calculates the number of workers for each task type:
    - Each task type that has work gets a minimum of one worker. Thus all the task types that have work get a worker.
    - The supervisor divides the remaining workers in proportion to the quantity of work. It uses the largest-remainder method.
    - The total number of workers is not more than `max_workers`. It is also not more than the quantity of work.
-4. It starts workers or stops workers. It continues until their number agrees with the calculation.
+3. It starts workers or stops workers. It continues until their number agrees with the calculation.
+
+At each **config reload interval** (the default value is 300 s) the supervisor reads the configuration of the administrator again. The configuration contains the maximum number of workers, the two intervals, and the enable switch. A restart is not necessary. But a change does not become effective immediately. The supervisor uses the new value at the next config reload interval, thus after 300 s at the most. If you want a change to become effective more quickly, decrease the config reload interval.
+
+The supervisor also reads the configuration one time when it starts. Thus the first poll uses the correct settings.
+
+If the database shows an error at a config reload interval, the supervisor keeps the previous values and continues to operate.
 
 The **work** of a task type is the sum of two values:
 
@@ -103,6 +110,7 @@ All the settings are in the **AI** section of the administrator settings.
 | Enable          | on      | `autoscale_enabled`  | The main switch. When it is off, all the workers stop. |
 | Maximum workers | 4       | `max_workers`        | The maximum number of workers for all the task types together. |
 | Poll interval   | 10 s    | `poll_interval`      | The interval between two examinations of the queue. |
+| Config reload interval | 300 s   | `config_interval`    | The interval between two examinations of these settings. A change of a setting becomes effective after this interval at the most. |
 
 The supervisor starts workers only for the task types that have work. When there is no work, the number of workers becomes zero. A task type gets no more workers than the number of tasks of that type. Therefore `max_workers` is the setting that controls the performance.
 

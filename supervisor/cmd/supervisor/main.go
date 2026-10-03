@@ -96,73 +96,139 @@ func checkOcc(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// run is the main control loop. It polls at the interval reported by the app
-// config (re-read each tick so changes take effect without a restart).
+// supervisor carries the state shared by the two loop cadences: the fast poll
+// that reconciles workers against the queue, and the slow refresh that re-reads
+// admin config.
+type supervisor struct {
+	logger     *slog.Logger
+	ncDB       *db.DB
+	workerPool *pool.Pool
+
+	// cfg is the most recent config successfully read from the database. Every
+	// poll uses it until the next refresh replaces it, so a database blip
+	// leaves the supervisor scaling on the last known-good values rather than
+	// stalling or falling back to defaults.
+	cfg db.SupervisorConfig
+}
+
+// run is the main control loop. Config reads and queue polls run on separate
+// cadences: the queue is volatile and needs frequent polling, while admin
+// settings change rarely, so re-reading them at the poll rate is pure overhead.
+// Both intervals are themselves admin-configurable.
 func run(ctx context.Context, logger *slog.Logger, ncDB *db.DB, workerPool *pool.Pool) {
-	// Default interval until the first successful config fetch.
-	interval := 10 * time.Second
-	timer := time.NewTimer(0)
-	defer timer.Stop()
+	s := &supervisor{
+		logger:     logger,
+		ncDB:       ncDB,
+		workerPool: workerPool,
+		cfg:        db.DefaultConfig(),
+	}
+
+	// Read config once up front so the first poll scales on real settings
+	// rather than on defaults.
+	s.refreshConfig(ctx)
+
+	pollTimer := time.NewTimer(0)
+	defer pollTimer.Stop()
+	configTimer := time.NewTimer(s.configInterval())
+	defer configTimer.Stop()
+
+	pollEvery := s.pollInterval()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
-		}
 
-		next := tick(ctx, logger, ncDB, workerPool, interval)
-		interval = next
-		timer.Reset(interval)
+		case <-configTimer.C:
+			s.refreshConfig(ctx)
+			configTimer.Reset(s.configInterval())
+
+			// Apply a changed poll interval immediately. Without this, a
+			// shortened interval would not take effect until the pending
+			// timer expired at the old, longer interval.
+			if next := s.pollInterval(); next != pollEvery {
+				pollEvery = next
+				pollTimer.Stop()
+				pollTimer.Reset(pollEvery)
+			}
+
+		case <-pollTimer.C:
+			s.poll(ctx)
+			pollEvery = s.pollInterval()
+			pollTimer.Reset(pollEvery)
+		}
 	}
 }
 
-// lastConfig is the config seen on the previous tick, used to detect changes.
-var lastConfig db.SupervisorConfig
+// pollInterval is how long to wait between queue polls.
+func (s *supervisor) pollInterval() time.Duration {
+	if s.cfg.PollInterval <= 0 {
+		return time.Duration(db.DefaultConfig().PollInterval) * time.Second
+	}
+	return time.Duration(s.cfg.PollInterval) * time.Second
+}
 
-// tick performs one poll/schedule/reconcile cycle and returns the interval to
-// wait before the next cycle.
-func tick(ctx context.Context, logger *slog.Logger, ncDB *db.DB, workerPool *pool.Pool, fallback time.Duration) time.Duration {
+// configInterval is how long to wait between config re-reads.
+func (s *supervisor) configInterval() time.Duration {
+	if s.cfg.ConfigInterval <= 0 {
+		return time.Duration(db.DefaultConfig().ConfigInterval) * time.Second
+	}
+	return time.Duration(s.cfg.ConfigInterval) * time.Second
+}
+
+// refreshConfig re-reads admin config. On failure the previous config is kept,
+// so a transient database error does not disrupt scaling.
+func (s *supervisor) refreshConfig(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	cfg, err := ncDB.GetConfig(cctx)
+	cfg, err := s.ncDB.GetConfig(cctx)
 	if err != nil {
-		logger.Warn("failed to read config from db, keeping previous interval", "err", err)
-		return fallback
+		s.logger.Warn("failed to read config from db, keeping previous values", "err", err)
+		return
+	}
+	if cfg == s.cfg {
+		return
 	}
 
 	// Config changed: a provider may have been configured since, so re-test
 	// task types previously found to have no synchronous provider.
-	if cfg != lastConfig {
-		workerPool.ResetUnworkable()
-		lastConfig = cfg
-	}
+	s.workerPool.ResetUnworkable()
+	s.cfg = cfg
 
-	interval := time.Duration(cfg.PollInterval) * time.Second
-	if interval <= 0 {
-		interval = fallback
-	}
+	s.logger.Info("config reloaded",
+		"max", cfg.MaxWorkers,
+		"pollInterval", cfg.PollInterval,
+		"configInterval", cfg.ConfigInterval,
+		"enabled", cfg.Enabled,
+	)
+}
 
-	if !cfg.Enabled {
+// poll performs one queue-read/schedule/reconcile cycle against the config
+// cached by the most recent refresh.
+func (s *supervisor) poll(ctx context.Context) {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if !s.cfg.Enabled {
 		// Disabled: drain all workers and idle.
-		workerPool.Reconcile(ctx, map[string]int{})
-		logger.Debug("supervisor disabled, no workers running")
-		return interval
+		s.workerPool.Reconcile(ctx, map[string]int{})
+		s.logger.Debug("supervisor disabled, no workers running")
+		return
 	}
 
-	taskTypes, err := ncDB.ListTaskTypes(cctx)
+	taskTypes, err := s.ncDB.ListTaskTypes(cctx)
 	if err != nil {
-		logger.Warn("failed to list task types", "err", err)
-		return interval
+		s.logger.Warn("failed to list task types", "err", err)
+		return
 	}
 
-	running := workerPool.Running()
+	running := s.workerPool.Running()
 	demands := make([]scheduler.Demand, 0, len(taskTypes))
 	for _, id := range taskTypes {
-		stats, err := ncDB.GetQueueStats(cctx, id)
+		stats, err := s.ncDB.GetQueueStats(cctx, id)
 		if err != nil {
-			logger.Warn("failed to fetch queue stats", "taskType", id, "err", err)
+			s.logger.Warn("failed to fetch queue stats", "taskType", id, "err", err)
 			continue
 		}
 		demands = append(demands, scheduler.Demand{
@@ -173,14 +239,12 @@ func tick(ctx context.Context, logger *slog.Logger, ncDB *db.DB, workerPool *poo
 		})
 	}
 
-	plan := scheduler.Compute(demands, cfg.MaxWorkers)
-	workerPool.Reconcile(ctx, plan)
+	plan := scheduler.Compute(demands, s.cfg.MaxWorkers)
+	s.workerPool.Reconcile(ctx, plan)
 
-	logger.Info("reconciled workers",
-		"max", cfg.MaxWorkers,
+	s.logger.Info("reconciled workers",
+		"max", s.cfg.MaxWorkers,
 		"plan", plan,
-		"workers", workerPool.Running(),
+		"workers", s.workerPool.Running(),
 	)
-
-	return interval
 }
