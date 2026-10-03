@@ -48,7 +48,7 @@ class ConfigController extends OCSController {
 	#[AuthorizedAdminSetting(settings: AdminSettings::class)]
 	#[ApiRoute(verb: 'GET', url: '/config', root: '/task_proc_util')]
 	public function getConfig(): DataResponse {
-		return new DataResponse($this->config->toArray());
+		return new DataResponse($this->config);
 	}
 
 	/**
@@ -86,6 +86,6 @@ class ConfigController extends OCSController {
 			$this->config->setEnabled($enabled);
 		}
 
-		return new DataResponse($this->config->toArray());
+		return new DataResponse($this->config);
 	}
 }

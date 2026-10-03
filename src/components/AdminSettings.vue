@@ -34,9 +34,13 @@
 					@update:model-value="onChange" />
 			</div>
 
-			<p v-if="error" class="tpu-error">
+			<div v-if="loading" class="tpu-saving-info">
+				<NcLoadingIcon :size="20" class="icon" />
+				{{ t('task_proc_util', 'Saving...') }}
+			</div>
+			<div v-if="error" class="tpu-error">
 				{{ error }}
-			</p>
+			</div>
 		</div>
 	</NcSettingsSection>
 </template>
@@ -48,9 +52,11 @@ import { loadState } from '@nextcloud/initial-state'
 import { translate as t } from '@nextcloud/l10n'
 import { generateOcsUrl } from '@nextcloud/router'
 import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
+import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcSettingsSection from '@nextcloud/vue/components/NcSettingsSection'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 
+let timeout
 /**
  * Returns a debounced version of `fn` that delays invocation until `ms`
  * milliseconds have elapsed since the last call.
@@ -59,8 +65,7 @@ import NcTextField from '@nextcloud/vue/components/NcTextField'
  * @param {number} ms the debounce delay in milliseconds
  * @return {(...args: unknown[]) => void} the debounced function
  */
-function debounce(fn, ms = 600) {
-	let timeout
+function debounce(fn, ms = 2000) {
 	return function(...args) {
 		clearTimeout(timeout)
 		timeout = setTimeout(() => fn.apply(this, args), ms)
@@ -74,6 +79,7 @@ export default {
 		NcSettingsSection,
 		NcTextField,
 		NcCheckboxRadioSwitch,
+		NcLoadingIcon,
 	},
 
 	data() {
@@ -87,19 +93,14 @@ export default {
 			maxWorkersStr: String(config.max_workers),
 			pollIntervalStr: String(config.poll_interval),
 			error: '',
+			loading: false,
 		}
 	},
 
-	created() {
-		this.debouncedSave = debounce(() => this.save(), 600)
-	},
-
 	methods: {
-		t,
-
 		onChange() {
 			this.error = ''
-			this.debouncedSave()
+			debounce(this.save)()
 		},
 
 		onToggleEnabled(value) {
@@ -126,6 +127,7 @@ export default {
 				return
 			}
 			try {
+				this.loading = true
 				const { data } = await axios.put(
 					generateOcsUrl('task_proc_util/config'),
 					{
@@ -143,6 +145,8 @@ export default {
 					|| e.response?.data?.message
 					|| t('task_proc_util', 'Failed to save settings')
 				showError(this.error)
+			} finally {
+				this.loading = false
 			}
 		},
 	},
@@ -155,13 +159,23 @@ export default {
 	flex-direction: column;
 	gap: 16px;
 	max-width: 480px;
-}
 
-.tpu-field {
-	max-width: 320px;
-}
+	.tpu-field {
+		max-width: 320px;
 
-.tpu-error {
-	color: var(--color-error);
+		:deep(.input-field__helper-text-message) {
+			width: 480px;
+			max-width: 480px;
+		}
+	}
+
+	.tpu-saving-info {
+		display: flex;
+		flex-direction: row;
+	}
+
+	.tpu-error {
+		color: var(--color-error);
+	}
 }
 </style>

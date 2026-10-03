@@ -18,7 +18,7 @@ use OCP\IAppConfig;
  * These values are written by the admin settings UI and read by the Go
  * supervisor through the config controller.
  */
-class AppConfig {
+class AppConfig implements \JsonSerializable {
 	public const KEY_MAX_WORKERS = 'max_workers';
 	public const KEY_POLL_INTERVAL = 'poll_interval';
 
@@ -71,7 +71,7 @@ class AppConfig {
 	/**
 	 * @return array{max_workers: int, poll_interval: int, enabled: bool}
 	 */
-	public function toArray(): array {
+	public function jsonSerialize(): array {
 		return [
 			self::KEY_MAX_WORKERS => $this->getMaxWorkers(),
 			self::KEY_POLL_INTERVAL => $this->getPollInterval(),
