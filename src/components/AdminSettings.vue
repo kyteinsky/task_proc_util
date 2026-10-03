@@ -36,7 +36,7 @@
 
 			<div v-if="loading" class="tpu-saving-info">
 				<NcLoadingIcon :size="20" class="icon" />
-				{{ t('task_proc_util', 'Saving...') }}
+				{{ t('task_proc_util', 'Saving…') }}
 			</div>
 			<div v-if="error" class="tpu-error">
 				{{ error }}
