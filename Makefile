@@ -30,11 +30,17 @@ frontend:
 # selects the right one at runtime based on `uname -m`.
 RELEASE_TARGETS=linux/amd64 linux/arm64 linux/arm
 
+# -buildvcs=false: the release is packaged from a throwaway clone (krankerl
+# copies the app into a temp directory), where git refuses to report status and
+# `go build` fails with "error obtaining VCS status: exit status 128". The stamp
+# is worthless here anyway, since -ldflags "-s -w" strips the binary.
+GOBUILD=CGO_ENABLED=0 $(GO) build -trimpath -buildvcs=false -ldflags "-s -w"
+
 # Build only for the host arch (fast, for local development).
 .PHONY: supervisor
 supervisor:
 	mkdir -p $(bin_dir)/$(shell $(GO) env GOARCH)
-	cd $(supervisor_dir) && CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" \
+	cd $(supervisor_dir) && $(GOBUILD) \
 		-o $(bin_dir)/$(shell $(GO) env GOARCH)/task_proc_util-supervisor ./cmd/supervisor
 
 # Cross-compile a binary for every shipped arch.
@@ -44,8 +50,7 @@ supervisor-release:
 		os=$${target%/*}; arch=$${target#*/}; \
 		echo "Building $$os/$$arch"; \
 		mkdir -p $(bin_dir)/$$arch; \
-		cd $(supervisor_dir) && CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
-			$(GO) build -trimpath -ldflags "-s -w" \
+		cd $(supervisor_dir) && GOOS=$$os GOARCH=$$arch $(GOBUILD) \
 			-o $(bin_dir)/$$arch/task_proc_util-supervisor ./cmd/supervisor || exit 1; \
 	done
 
