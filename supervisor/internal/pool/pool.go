@@ -118,6 +118,21 @@ func (p *Pool) ResetUnworkable() {
 	clear(p.unworkable)
 }
 
+// IsUnworkable reports whether a task type has been found to have no preferred
+// synchronous provider, and so can never be served by a worker.
+//
+// Whether a provider is synchronous is a PHP `instanceof ISynchronousProvider`
+// check against classes registered at runtime. The database stores no provider
+// information at all, so the queue query cannot tell the two kinds of task
+// apart; the only signal is a worker exiting with EXIT_NO_SYNC_PROVIDER. This
+// exposes that signal so the scheduler can skip these types before allocating
+// worker slots, rather than having Reconcile discard the slots afterwards.
+func (p *Pool) IsUnworkable(taskTypeID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.unworkable[taskTypeID]
+}
+
 // Reconcile starts or stops workers so the running count per task type matches
 // the desired plan. Task types absent from the plan are scaled to zero.
 func (p *Pool) Reconcile(ctx context.Context, desired map[string]int) {

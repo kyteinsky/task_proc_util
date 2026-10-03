@@ -9,6 +9,7 @@ import (
 	"database/sql/driver"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -177,6 +178,122 @@ func TestPollCostIsOneQueryRegardlessOfTaskTypes(t *testing.T) {
 	}
 	if statsN < 2 {
 		t.Errorf("queue stats read only %d times; the poll loop did not run", statsN)
+	}
+}
+
+// Tasks of a type served by an asynchronous provider are indistinguishable
+// from synchronous ones in the queue table, so they reach the scheduler. Once
+// a worker has reported the type unworkable, the whole worker budget must go
+// to the types that can actually use it.
+//
+// Without the filter the async type wins a proportional share of max_workers
+// (3 of 4 in this setup), those workers are never started, and the sync type
+// runs one worker instead of four.
+func TestAsyncTaskTypesDoNotConsumeWorkerBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing-based; runs the real loop")
+	}
+
+	ncDB, writer := newLoopDB(t, 1, 3600)
+	if _, err := writer.Exec(
+		`UPDATE oc_appconfig SET configvalue = '4' WHERE configkey = 'max_workers'`); err != nil {
+		t.Fatal(err)
+	}
+	// async:type floods the queue; sync:type has real but less work.
+	for i := range 100 {
+		if _, err := writer.Exec(
+			`INSERT INTO oc_taskprocessing_tasks (id, type, status) VALUES (?,'async:type',1)`, i+1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 10 {
+		if _, err := writer.Exec(
+			`INSERT INTO oc_taskprocessing_tasks (id, type, status) VALUES (?,'sync:type',1)`, 1000+i); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A worker for async:type exits 3 (EXIT_NO_SYNC_PROVIDER); one for
+	// sync:type keeps running.
+	root := t.TempDir()
+	script := filepath.Join(root, "occ.sh")
+	if err := os.WriteFile(script, []byte(
+		"#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in async:type) exit 3;; esac; done\nsleep 30\n",
+	), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	wp := pool.New([]string{"/bin/sh", script}, root, 0, ncDB, logger)
+	t.Cleanup(wp.Shutdown)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	run(ctx, logger, ncDB, wp)
+
+	got := wp.Running()
+	t.Logf("running workers: %v", got)
+
+	if !wp.IsUnworkable("async:type") {
+		t.Fatal("async:type was never detected as unworkable")
+	}
+	if got["async:type"] != 0 {
+		t.Errorf("async:type has %d workers, want 0", got["async:type"])
+	}
+	// The whole budget is available to the only workable type.
+	if got["sync:type"] != 4 {
+		t.Errorf("sync:type has %d workers, want the full budget of 4", got["sync:type"])
+	}
+}
+
+// An admin can switch a task type from an asynchronous provider to a
+// synchronous one. That choice lives in a Nextcloud config key the supervisor
+// never reads, so nothing it can observe changes. The blacklist must still be
+// retried every config interval, or the type stays unserved until the service
+// restarts.
+func TestUnworkableTypeIsRetriedAfterConfigInterval(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing-based; runs the real loop")
+	}
+
+	ncDB, writer := newLoopDB(t, 1, 2) // poll 1s, config reload 2s
+	if _, err := writer.Exec(
+		`INSERT INTO oc_taskprocessing_tasks (id, type, status) VALUES (1,'flip:type',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// The worker exits 3 while the marker file is absent, mimicking a task
+	// type with no synchronous provider. Creating the file is the admin
+	// switching to a synchronous provider: nothing in the supervisor's own
+	// config changes.
+	root := t.TempDir()
+	marker := filepath.Join(root, "sync-provider-configured")
+	script := filepath.Join(root, "occ.sh")
+	if err := os.WriteFile(script, []byte(
+		"#!/bin/sh\nif [ ! -f '"+marker+"' ]; then exit 3; fi\nsleep 30\n",
+	), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	wp := pool.New([]string{"/bin/sh", script}, root, 0, ncDB, logger)
+	t.Cleanup(wp.Shutdown)
+
+	go func() {
+		time.Sleep(3 * time.Second)
+		if err := os.WriteFile(marker, []byte("1"), 0o644); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	run(ctx, logger, ncDB, wp)
+
+	got := wp.Running()
+	t.Logf("running workers after the provider became synchronous: %v", got)
+	if got["flip:type"] < 1 {
+		t.Errorf("task type still blacklisted after the config interval elapsed: %v", got)
 	}
 }
 

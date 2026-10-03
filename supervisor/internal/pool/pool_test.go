@@ -80,6 +80,39 @@ func TestWorkerFailureReportsStderr(t *testing.T) {
 	}
 }
 
+// A task type served by an asynchronous provider is driven elsewhere, so its
+// worker exits with EXIT_NO_SYNC_PROVIDER. The pool must report that type as
+// unworkable, so the scheduler can skip it before dividing the worker budget
+// instead of handing it slots that are then thrown away.
+func TestAsyncTaskTypeIsReportedUnworkable(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "occ.sh")
+	// Mirrors Run::EXIT_NO_SYNC_PROVIDER.
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelError}))
+	p := New([]string{"/bin/sh", script}, root, 0, nil, logger)
+	t.Cleanup(p.Shutdown)
+
+	if p.IsUnworkable("async:type") {
+		t.Fatal("task type reported unworkable before any worker ran")
+	}
+
+	p.Reconcile(context.Background(), map[string]int{"async:type": 1})
+	time.Sleep(600 * time.Millisecond)
+
+	if !p.IsUnworkable("async:type") {
+		t.Error("task type whose worker exited EXIT_NO_SYNC_PROVIDER is not reported unworkable")
+	}
+
+	// A provider can be configured later, so the verdict must not be permanent.
+	p.ResetUnworkable()
+	if p.IsUnworkable("async:type") {
+		t.Error("ResetUnworkable did not clear the verdict")
+	}
+}
+
 func TestTailBufferRetainsLastBytes(t *testing.T) {
 	single := &tailBuffer{limit: 10}
 	if _, err := single.Write([]byte("0123456789abcdef")); err != nil {

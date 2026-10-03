@@ -187,13 +187,32 @@ func (s *supervisor) refreshConfig(ctx context.Context) {
 		s.logger.Warn("failed to read config from db, keeping previous values", "err", err)
 		return
 	}
+
+	// Re-test the task types previously found to have no synchronous provider,
+	// on every refresh rather than only when this config changed.
+	//
+	// Provider preferences are not part of this config. Nextcloud keeps them in
+	// oc_appconfig under core/ai.taskprocessing_provider_preferences, which is
+	// readable from here, but the value is a {taskTypeId: providerId} map and a
+	// provider id says nothing about whether that provider is synchronous: that
+	// is an `instanceof ISynchronousProvider` check against a class resolved
+	// from the runtime service container. The map is also absent whenever no
+	// preference was set, since Nextcloud then falls back to the first
+	// registered provider for the type.
+	//
+	// So an admin switching a task type from an asynchronous provider to a
+	// synchronous one changes nothing the supervisor can evaluate. Resetting
+	// only on a visible change would keep that type blacklisted until the
+	// service restarts.
+	//
+	// The cost of being wrong is one PHP bootstrap per blacklisted type per
+	// config interval, which is why the interval is minutes rather than
+	// seconds.
+	s.workerPool.ResetUnworkable()
+
 	if cfg == s.cfg {
 		return
 	}
-
-	// Config changed: a provider may have been configured since, so re-test
-	// task types previously found to have no synchronous provider.
-	s.workerPool.ResetUnworkable()
 	s.cfg = cfg
 
 	s.logger.Info("config reloaded",
@@ -225,7 +244,24 @@ func (s *supervisor) poll(ctx context.Context) {
 
 	running := s.workerPool.Running()
 	demands := make([]scheduler.Demand, 0, len(queueStats))
+	skipped := 0
 	for id, stats := range queueStats {
+		// The queue query cannot distinguish a task awaiting a synchronous
+		// provider from one driven by an asynchronous provider elsewhere: the
+		// database holds no provider information, and synchronicity is a PHP
+		// type check on runtime-registered classes. A task type is known to be
+		// asynchronous only once a worker for it has exited reporting no
+		// synchronous provider.
+		//
+		// Such a type must be dropped here rather than later, when workers are
+		// started. Its tasks are real and often numerous, so leaving it in the
+		// demand set wins it a proportional share of the worker budget, and
+		// those workers are then never started — starving the task types that
+		// could have used them.
+		if s.workerPool.IsUnworkable(id) {
+			skipped++
+			continue
+		}
 		demands = append(demands, scheduler.Demand{
 			TaskTypeID: id,
 			Scheduled:  stats.Scheduled,
@@ -241,5 +277,6 @@ func (s *supervisor) poll(ctx context.Context) {
 		"max", s.cfg.MaxWorkers,
 		"plan", plan,
 		"workers", s.workerPool.Running(),
+		"skippedAsyncTypes", skipped,
 	)
 }
