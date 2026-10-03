@@ -1,0 +1,29 @@
+repository_link: https://github.com/kyteinsky/task_proc_util
+title: Change Log
+description: All notable changes to this project will be documented in this file.
+markdown_preamble: |-
+  <!--
+    - SPDX-FileCopyrightText: 2026 Nextcloud GmbH and Nextcloud contributors
+    - SPDX-License-Identifier: AGPL-3.0-or-later
+  -->
+  # Change Log
+  All notable changes to this project will be documented in this file.
+
+  The format is based on [Keep a Changelog](http://keepachangelog.com/)
+  and this project adheres to [Semantic Versioning](http://semver.org/).
+release_agent:
+  ignore_commits:
+  - author: "^pre-commit-ci\\[bot\\]$"
+  - author: "^Nextcloud-bot$"
+  - email: bot@nextcloud.com
+  - author: "^dependabot\\[bot\\]$"
+  - message: "^chore\\(changelog\\):"
+entries:
+- version: 0.1.0
+  release_date: '2026-10-03'
+  sections:
+  - name: Added
+    items:
+    - text: first release
+      authors:
+      - kyteinsky
