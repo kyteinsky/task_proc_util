@@ -213,18 +213,30 @@ func (d *DB) ListTaskTypes(ctx context.Context) ([]string, error) {
 
 // SupervisorConfig is the admin-tunable config stored in oc_appconfig.
 type SupervisorConfig struct {
-	MaxWorkers   int
+	MaxWorkers int
+	// PollInterval is the seconds between queue polls: how often the task
+	// tables are read and the worker pool reconciled.
 	PollInterval int
-	Enabled      bool
+	// ConfigInterval is the seconds between re-reads of this struct. Admin
+	// settings change rarely, so this is far coarser than PollInterval.
+	ConfigInterval int
+	Enabled        bool
+}
+
+// DefaultConfig returns the values used when a key is absent from appconfig or
+// cannot be read. They must match the defaults in lib/AppConfig.php.
+func DefaultConfig() SupervisorConfig {
+	return SupervisorConfig{
+		MaxWorkers:     4,
+		PollInterval:   10,
+		ConfigInterval: 300,
+		Enabled:        true,
+	}
 }
 
 // GetConfig reads supervisor settings from oc_appconfig.
 func (d *DB) GetConfig(ctx context.Context) (SupervisorConfig, error) {
-	cfg := SupervisorConfig{
-		MaxWorkers:   4,
-		PollInterval: 10,
-		Enabled:      true,
-	}
+	cfg := DefaultConfig()
 	table := d.prefix + "appconfig"
 	rows, err := d.db.QueryContext(ctx,
 		d.rebind(fmt.Sprintf("SELECT configkey, configvalue FROM %s WHERE appid = ?", table)),
@@ -246,6 +258,10 @@ func (d *DB) GetConfig(ctx context.Context) (SupervisorConfig, error) {
 		case "poll_interval":
 			if n, err := strconv.Atoi(v); err == nil {
 				cfg.PollInterval = n
+			}
+		case "config_interval":
+			if n, err := strconv.Atoi(v); err == nil {
+				cfg.ConfigInterval = n
 			}
 		case "autoscale_enabled":
 			// Deliberately not the "enabled" key: Nextcloud reserves that one

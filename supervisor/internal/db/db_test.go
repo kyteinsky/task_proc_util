@@ -22,7 +22,20 @@ func newTestDB(t *testing.T) *DB {
 		ended_at INTEGER, last_updated INTEGER, error_message TEXT)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := raw.Exec(`CREATE TABLE oc_appconfig (
+		appid TEXT, configkey TEXT, configvalue TEXT)`); err != nil {
+		t.Fatal(err)
+	}
 	return &DB{db: raw, prefix: "oc_"}
+}
+
+func setAppConfig(t *testing.T, d *DB, key, value string) {
+	t.Helper()
+	if _, err := d.db.Exec(
+		`INSERT INTO oc_appconfig (appid, configkey, configvalue) VALUES ('task_proc_util', ?, ?)`,
+		key, value); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func status(t *testing.T, d *DB, id int) int {
@@ -107,5 +120,40 @@ func TestRebindPlaceholders(t *testing.T) {
 	my := &DB{}
 	if got := my.rebind(query); got != query {
 		t.Errorf("non-postgres rebind = %q, want unchanged", got)
+	}
+}
+
+// config_interval is read independently of poll_interval: the two cadences are
+// separate knobs, so setting one must not disturb the other.
+func TestGetConfigReadsIntervalsIndependently(t *testing.T) {
+	d := newTestDB(t)
+	setAppConfig(t, d, "poll_interval", "7")
+	setAppConfig(t, d, "config_interval", "900")
+
+	cfg, err := d.GetConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PollInterval != 7 {
+		t.Errorf("PollInterval = %d, want 7", cfg.PollInterval)
+	}
+	if cfg.ConfigInterval != 900 {
+		t.Errorf("ConfigInterval = %d, want 900", cfg.ConfigInterval)
+	}
+}
+
+// An existing installation has no config_interval row, so the supervisor must
+// fall back to the slow default rather than to zero, which would otherwise
+// spin the config loop continuously.
+func TestGetConfigDefaultsConfigIntervalWhenAbsent(t *testing.T) {
+	d := newTestDB(t)
+	setAppConfig(t, d, "poll_interval", "7")
+
+	cfg, err := d.GetConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := DefaultConfig().ConfigInterval; cfg.ConfigInterval != want {
+		t.Errorf("ConfigInterval = %d, want %d", cfg.ConfigInterval, want)
 	}
 }

@@ -29,7 +29,17 @@
 					v-model="pollIntervalStr"
 					type="number"
 					:label="t('task_proc_util', 'Poll interval (seconds)')"
-					:helper-text="t('task_proc_util', 'How often the supervisor checks the queue')"
+					:helper-text="t('task_proc_util', 'How often the supervisor checks the queue and rescales workers')"
+					:disabled="!config.enabled"
+					@update:model-value="onChange" />
+			</div>
+
+			<div class="tpu-field">
+				<NcTextField
+					v-model="configIntervalStr"
+					type="number"
+					:label="t('task_proc_util', 'Config reload interval (seconds)')"
+					:helper-text="t('task_proc_util', 'How often the supervisor re-reads these settings. Changes made here take up to this long to take effect.')"
 					:disabled="!config.enabled"
 					@update:model-value="onChange" />
 			</div>
@@ -86,12 +96,14 @@ export default {
 		const config = loadState('task_proc_util', 'config', {
 			max_workers: 4,
 			poll_interval: 10,
+			config_interval: 300,
 			enabled: true,
 		})
 		return {
 			config,
 			maxWorkersStr: String(config.max_workers),
 			pollIntervalStr: String(config.poll_interval),
+			configIntervalStr: String(config.config_interval),
 			error: '',
 			loading: false,
 		}
@@ -111,13 +123,14 @@ export default {
 		validate() {
 			const max = parseInt(this.maxWorkersStr, 10)
 			const poll = parseInt(this.pollIntervalStr, 10)
-			if (Number.isNaN(max) || Number.isNaN(poll)) {
+			const configInterval = parseInt(this.configIntervalStr, 10)
+			if (Number.isNaN(max) || Number.isNaN(poll) || Number.isNaN(configInterval)) {
 				return { ok: false, message: t('task_proc_util', 'All values must be numbers') }
 			}
-			if (max < 1 || poll < 1) {
+			if (max < 1 || poll < 1 || configInterval < 1) {
 				return { ok: false, message: t('task_proc_util', 'Values are out of range') }
 			}
-			return { ok: true, max, poll }
+			return { ok: true, max, poll, configInterval }
 		},
 
 		async save() {
@@ -133,12 +146,14 @@ export default {
 					{
 						maxWorkers: result.max,
 						pollInterval: result.poll,
+						configInterval: result.configInterval,
 						enabled: this.config.enabled,
 					},
 				)
 				this.config = data.ocs.data
 				this.maxWorkersStr = String(this.config.max_workers)
 				this.pollIntervalStr = String(this.config.poll_interval)
+				this.configIntervalStr = String(this.config.config_interval)
 				showSuccess(t('task_proc_util', 'Settings saved'))
 			} catch (e) {
 				this.error = e.response?.data?.ocs?.data?.message

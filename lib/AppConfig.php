@@ -21,6 +21,7 @@ use OCP\IAppConfig;
 class AppConfig implements \JsonSerializable {
 	public const KEY_MAX_WORKERS = 'max_workers';
 	public const KEY_POLL_INTERVAL = 'poll_interval';
+	public const KEY_CONFIG_INTERVAL = 'config_interval';
 
 	/**
 	 * Storage key for the auto-scaler switch.
@@ -38,6 +39,7 @@ class AppConfig implements \JsonSerializable {
 
 	private const DEFAULT_MAX_WORKERS = 4;
 	private const DEFAULT_POLL_INTERVAL = 10;
+	private const DEFAULT_CONFIG_INTERVAL = 300;
 
 	public function __construct(
 		private IAppConfig $appConfig,
@@ -60,6 +62,21 @@ class AppConfig implements \JsonSerializable {
 		$this->appConfig->setValueInt(Application::APP_ID, self::KEY_POLL_INTERVAL, max(1, $value));
 	}
 
+	/**
+	 * Seconds between re-reads of this config by the supervisor.
+	 *
+	 * Deliberately much coarser than the poll interval: the poll loop hits the
+	 * task tables every few seconds, but admin settings change rarely, so
+	 * re-reading them at the same rate is pure overhead.
+	 */
+	public function getConfigInterval(): int {
+		return $this->appConfig->getValueInt(Application::APP_ID, self::KEY_CONFIG_INTERVAL, self::DEFAULT_CONFIG_INTERVAL);
+	}
+
+	public function setConfigInterval(int $value): void {
+		$this->appConfig->setValueInt(Application::APP_ID, self::KEY_CONFIG_INTERVAL, max(1, $value));
+	}
+
 	public function isEnabled(): bool {
 		return $this->appConfig->getValueBool(Application::APP_ID, self::KEY_ENABLED, true);
 	}
@@ -69,12 +86,13 @@ class AppConfig implements \JsonSerializable {
 	}
 
 	/**
-	 * @return array{max_workers: int, poll_interval: int, enabled: bool}
+	 * @return array{max_workers: int, poll_interval: int, config_interval: int, enabled: bool}
 	 */
 	public function jsonSerialize(): array {
 		return [
 			self::KEY_MAX_WORKERS => $this->getMaxWorkers(),
 			self::KEY_POLL_INTERVAL => $this->getPollInterval(),
+			self::KEY_CONFIG_INTERVAL => $this->getConfigInterval(),
 			self::FIELD_ENABLED => $this->isEnabled(),
 		];
 	}
