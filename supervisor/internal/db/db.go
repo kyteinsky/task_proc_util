@@ -214,12 +214,20 @@ type SupervisorConfig struct {
 // cannot be read. They must match the defaults in lib/AppConfig.php.
 func DefaultConfig() SupervisorConfig {
 	return SupervisorConfig{
-		MaxWorkers:     4,
+		MaxWorkers:     8,
 		PollInterval:   10,
 		ConfigInterval: 300,
 		Enabled:        true,
 	}
 }
+
+// MaxWorkersUpperBound is the upper bound on SupervisorConfig.MaxWorkers, enforced
+// in GetConfig. Every worker is a full PHP process using roughly 300 MB of RAM,
+// so this bound holds the pool to about 38 GB even at peak (128 * 300 MB). It
+// mirrors ConfigLexicon::MAX_WORKERS_UPPER_BOUND on the PHP side: values written
+// through occ or direct SQL bypass the API validation there, and an oversized
+// value means memory and PID exhaustion for the whole host.
+const MaxWorkersUpperBound = 128
 
 // GetConfig reads supervisor settings from oc_appconfig.
 func (d *DB) GetConfig(ctx context.Context) (SupervisorConfig, error) {
@@ -240,6 +248,9 @@ func (d *DB) GetConfig(ctx context.Context) (SupervisorConfig, error) {
 		switch k {
 		case "max_workers":
 			if n, err := strconv.Atoi(v); err == nil {
+				if n > MaxWorkersUpperBound {
+					n = MaxWorkersUpperBound
+				}
 				cfg.MaxWorkers = n
 			}
 		case "poll_interval":

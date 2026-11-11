@@ -98,7 +98,7 @@ All the settings are in the **AI** section of the administrator settings.
 | Setting         | Default | Name in the database | Function                                        |
 |-----------------|---------|----------------------|-------------------------------------------------|
 | Enable          | on      | `autoscale_enabled`  | The main switch. When it is off, all the workers stop. |
-| Maximum workers | 4       | `max_workers`        | The maximum number of workers for all the task types together. |
+| Maximum workers | 8       | `max_workers`        | The maximum number of workers for all the task types together. Values above 128 are rejected: a worker can use roughly 300 MB of RAM, so 128 already means about 38 GB at peak; the upper bound keeps a bad setting from forking more PHP processes than the host can survive. |
 | Poll interval   | 10 s    | `poll_interval`      | The interval between two examinations of the queue. |
 | Config reload interval | 300 s   | `config_interval`    | The interval between two examinations of these settings. A change of a setting becomes effective after this interval at the most. The supervisor also examines the task types without a synchronous provider again at this interval. |
 

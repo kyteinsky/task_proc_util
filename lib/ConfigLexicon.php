@@ -44,7 +44,22 @@ class ConfigLexicon implements ILexicon {
 	 */
 	public const ENABLED = 'autoscale_enabled';
 
-	public const DEFAULT_MAX_WORKERS = 4;
+	/**
+	 * Upper bound for max_workers.
+	 *
+	 * Every worker is a full PHP process that bootstraps Nextcloud, using
+	 * roughly 300 MB of RAM each, so the bound of 128 holds the pool to
+	 * about 38 GB even at peak (128 * 300 MB). Without an upper bound, one
+	 * mistyped or malicious admin write (API, occ, or direct SQL) scales
+	 * to hundreds of thousands of processes and takes the whole host down
+	 * (OOM / PID exhaustion). 128 is already far beyond what any realistic
+	 * machine can work on concurrently.
+	 * db.MaxWorkersUpperBound on the Go side mirrors this value, because
+	 * occ or direct SQL writes bypass the API validation below entirely.
+	 */
+	public const MAX_WORKERS_UPPER_BOUND = 128;
+
+	public const DEFAULT_MAX_WORKERS = 8;
 	public const DEFAULT_POLL_INTERVAL = 10;
 	public const DEFAULT_CONFIG_INTERVAL = 300;
 	public const DEFAULT_ENABLED = true;

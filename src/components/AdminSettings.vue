@@ -94,7 +94,7 @@ export default {
 
 	data() {
 		const config = loadState('task_proc_util', 'config', {
-			max_workers: 4,
+			max_workers: 8,
 			poll_interval: 10,
 			config_interval: 300,
 			enabled: true,

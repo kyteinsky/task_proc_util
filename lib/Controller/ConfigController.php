@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace OCA\TaskProcUtil\Controller;
 
 use OCA\TaskProcUtil\AppConfig;
+use OCA\TaskProcUtil\ConfigLexicon;
 use OCA\TaskProcUtil\Settings\AdminSettings;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\ApiRoute;
@@ -74,6 +75,16 @@ class ConfigController extends OCSController {
 		if ($maxWorkers !== null && $maxWorkers < 1) {
 			return new DataResponse(
 				['message' => 'Maximum workers must be at least 1'],
+				Http::STATUS_BAD_REQUEST,
+			);
+		}
+
+		// Without an upper bound here, one bad admin write would fork hundreds
+		// of thousands of PHP processes; the Go supervisor enforces the same
+		// bound via db.MaxWorkersUpperBound for writes bypassing this endpoint.
+		if ($maxWorkers !== null && $maxWorkers > ConfigLexicon::MAX_WORKERS_UPPER_BOUND) {
+			return new DataResponse(
+				['message' => 'Maximum workers must not exceed ' . ConfigLexicon::MAX_WORKERS_UPPER_BOUND],
 				Http::STATUS_BAD_REQUEST,
 			);
 		}

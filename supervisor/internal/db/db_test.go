@@ -219,3 +219,32 @@ func TestGetConfigDefaultsConfigIntervalWhenAbsent(t *testing.T) {
 		t.Errorf("ConfigInterval = %d, want %d", cfg.ConfigInterval, want)
 	}
 }
+
+// A huge max_workers value must never take effect: the PHP API rejects it,
+// but occ or direct SQL can still write it, and honoring it would let the pool
+// fork hundreds of thousands of PHP processes and take the whole host down.
+func TestGetConfigBoundsMaxWorkers(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored string
+		want   int
+	}{
+		{"below upper bound passes through", "16", 16},
+		{"at upper bound passes through", "128", MaxWorkersUpperBound},
+		{"above upper bound falls back to upper bound", "1000000", MaxWorkersUpperBound},
+		{"garbage keeps default", "not-a-number", DefaultConfig().MaxWorkers},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newTestDB(t)
+			setAppConfig(t, d, "max_workers", tc.stored)
+			cfg, err := d.GetConfig(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.MaxWorkers != tc.want {
+				t.Errorf("MaxWorkers = %d, want %d", cfg.MaxWorkers, tc.want)
+			}
+		})
+	}
+}
