@@ -27,7 +27,7 @@ php occ app:enable task_proc_util
 
 **2. Start the supervisor as a service.** The supervisor reads `config.php` directly. An application password is not necessary. HTTP credentials are not necessary. The service must operate on the same computer as Nextcloud. It must also operate as the user that owns `config.php`, usually `www-data`, because `occ` does not operate as a different user. The `notify_push` application uses the same method.
 
-Write this file to `/etc/systemd/system/task_proc_util.service`:
+Without systemd, for example in Docker Compose or in tmux or screen, see [Without systemd](#without-systemd). Otherwise, write this file to `/etc/systemd/system/task_proc_util.service`:
 
 ```ini
 [Unit]
@@ -72,6 +72,75 @@ If `occ` does not operate, the supervisor shows the cause and stops immediately.
 **4. Adjust the settings** in **Administration settings → Artificial Intelligence**. The [Configuration](#configuration) section gives all the values.
 
 For the requirements, see [Requirements](#requirements). For all the flags and environment variables, see [Reference](#reference).
+
+### Without systemd
+
+The supervisor is a normal foreground process. It writes its log to stderr and stops when it gets `SIGINT` or `SIGTERM`. Thus any process manager can operate it. The rules of step 2 apply also here: access to the same Nextcloud files and database, the user that owns `config.php`, and a long stop interval.
+
+#### Docker Compose
+
+In the official `nextcloud` image, the App Store puts applications in `custom_apps/`, not in `apps/`. Add a service that uses the same image and the same volumes as the `app` service:
+
+```yaml
+services:
+  # The app, cron, db and redis services stay unchanged.
+
+  task_proc_util:
+    image: nextcloud:apache            # the same image and tag as the app service
+    restart: always
+    user: www-data
+    # Runs a small init process (tini in Docker) as PID 1. It collects the
+    # processes that the PHP workers start and leave behind, which the
+    # supervisor does not wait for.
+    init: true
+    entrypoint:
+      - /var/www/html/custom_apps/task_proc_util/bin/task_proc_util-supervisor
+      - /var/www/html/config/config.php
+    environment:
+      - NC_WORKER_TIMEOUT=300
+    volumes:
+      - nextcloud:/var/www/html:z      # the same volumes as the app service
+    # When it stops, the supervisor gives each worker 30 minutes to complete
+    # its current task, and then sends SIGKILL. This period must be longer, so
+    # the supervisor can stop the last workers and exit by itself. With a
+    # shorter period, Docker kills all the processes before the tasks are
+    # complete. 1h is the same as TimeoutStopSec in the systemd unit.
+    stop_grace_period: 1h
+    depends_on:
+      - app
+```
+
+The service replaces the entrypoint of the image. Thus it does not install or update Nextcloud. The `app` service continues to do that. Until you enable the application, the binary file is not there, and the container starts again and again. This is normal.
+
+```sh
+docker compose up -d task_proc_util
+docker compose logs -f -n200 task_proc_util
+```
+
+#### tmux or screen
+
+Use this method for tests. A tmux or screen session does not start again after a crash or a restart of the computer.
+
+```sh
+# tmux: start in the background, then attach to see the log (Ctrl-b d detaches)
+tmux new-session -d -s task_proc_util \
+  sudo -u www-data /var/www/html/apps/task_proc_util/bin/task_proc_util-supervisor /var/www/html/config/config.php
+tmux attach -t task_proc_util
+
+# screen: the same (Ctrl-a d detaches)
+screen -dmS task_proc_util \
+  sudo -u www-data /var/www/html/apps/task_proc_util/bin/task_proc_util-supervisor /var/www/html/config/config.php
+screen -r task_proc_util
+```
+
+To stop the supervisor, send Ctrl-C and wait. The workers complete their current tasks first:
+
+```sh
+tmux send-keys -t task_proc_util C-c
+screen -S task_proc_util -X stuff $'\003'
+```
+
+Do not close the window or kill the session. That sends `SIGHUP`, and the supervisor then stops immediately without the workers. The workers continue until their timeout, and the supervisor cannot set the state of their tasks.
 
 ## How the Application Operates
 
