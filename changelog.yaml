@@ -19,6 +19,17 @@ release_agent:
   - author: "^dependabot\\[bot\\]$"
   - message: "^chore\\(changelog\\):"
 entries:
+- version: 0.1.3
+  release_date: '2026-11-13'
+  sections:
+  - name: Fixed
+    items:
+    - text: make binaries executable in a migration
+      authors:
+      - kyteinsky
+    - text: set default max workers to 8, with hard limit at 128
+      authors:
+      - kyteinsky
 - version: 0.1.2
   release_date: '2026-10-04'
   sections:

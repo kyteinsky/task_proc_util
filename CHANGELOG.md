@@ -8,6 +8,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## 0.1.3 - 2026-11-13
+
+### Fixed
+- make binaries executable in a migration @kyteinsky
+- set default max workers to 8, with hard limit at 128 @kyteinsky
+
+
 ## 0.1.2 - 2026-10-04
 
 ### Changed
