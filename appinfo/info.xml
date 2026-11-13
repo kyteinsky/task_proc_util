@@ -74,6 +74,14 @@ https://github.com/kyteinsky/task_proc_util#setup
 	<dependencies>
 		<nextcloud min-version="33" max-version="36"/>
 	</dependencies>
+	<repair-steps>
+		<post-migration>
+			<step>OCA\TaskProcUtil\Migration\MakeBinariesExecutable</step>
+		</post-migration>
+		<install>
+			<step>OCA\TaskProcUtil\Migration\MakeBinariesExecutable</step>
+		</install>
+	</repair-steps>
 	<commands>
 		<command>OCA\TaskProcUtil\Command\Run</command>
 	</commands>

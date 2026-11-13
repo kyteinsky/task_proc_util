@@ -52,6 +52,8 @@ TimeoutStopSec=3600
 WantedBy=multi-user.target
 ```
 
+The App Store installer does not keep file permissions. Thus the application makes the files in `bin/` executable again when it is installed or updated. If the log of that step shows a warning, run the `chmod +x` command from the warning.
+
 Then start the service:
 
 ```sh
